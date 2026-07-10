@@ -1,0 +1,7 @@
+{
+  "name": "student-portal",
+  "version": "1.0.0",
+  "dependencies": {
+    "express": "^4.22.1"
+  }
+}
