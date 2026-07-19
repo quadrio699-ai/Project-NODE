@@ -15,11 +15,14 @@ This is the origin project that shaped a broader focus on offline-first infrastr
 - **Session-scoped messaging** — students only see class comments/messages posted *after* their current session started, so no one scrolls through old history from before they logged in.
 - **Dynamic lesson library** — automatically scans and categorizes lesson files across subjects (Computing, Education, Engineering, Science, Public Resources), including nested subfolders like Physics → Electricity.
 - **Secure downloads** — students can download lesson files directly through a dedicated download route.
+- **Real accounts** — students sign up with a name and password (hashed, never stored in plain text). Every account is created as a `student` by default.
+- **Password reset without internet** — each account sets a security question at signup. Forgetting a password doesn't mean losing quiz progress: answer the question, set a new password, all handled locally with no email or SMS involved.
 
 ## Tech Stack
 
 - **Backend:** Node.js, Express
-- **Storage:** JSON-based local database (`database.json`)
+- **Storage:** Node's built-in SQLite (`node:sqlite`, no separate package) for accounts; JSON (`database.json`) for comments
+- **Auth:** bcrypt password hashing + JWT sessions
 - **Frontend:** Static HTML/CSS/JS served directly by Express
 - **Deployment:** Local intranet (Docker-ready)
 
@@ -31,13 +34,42 @@ node server.js
 # Visit http://localhost:80
 ```
 
+Set a `JWT_SECRET` environment variable before deploying anywhere real (on Railway: Variables tab → add `JWT_SECRET` → any long random string). Without it, the server falls back to an insecure default and prints a warning.
+
+⚠️ **Before deploying to Railway for real:** attach a persistent Volume to `node.db` (and `database.json`). Without one, Railway's filesystem resets on every redeploy — meaning every student account and every comment would vanish the next time you push new code. Railway dashboard → your service → Settings → Volumes → mount at the project folder path.
+
+## Sorting out MIT OCW downloads
+
+MIT OCW zip downloads bundle a lot together — lecture notes, assignments, exams, and often huge video/audio files, all mixed into nested folders. `organize-ocw.js` pulls out just the lightweight files (PDFs, docs, slides) and drops them straight into the right lesson folder, skipping videos/audio (which are usually hundreds of MB each and impractical to hand out over a local network).
+
+```bash
+node organize-ocw.js <path-to-zip> <Category> <Topic>
+
+# Example:
+node organize-ocw.js ~/Downloads/6-006-fall-2020.zip Computing Algorithm
+```
+
+Category must be one of: `Computing`, `Education`, `Engineering`, `Public Resources`, `Science` (these are the only ones the app scans for). The script tells you exactly how many files it added and how much video/audio it skipped.
+
+## Making someone a teacher
+
+There's no self-service "sign up as teacher" option on purpose — otherwise any student could grant themselves upload access. To promote an existing account, run this on the server:
+
+```bash
+node -e "const {DatabaseSync}=require('node:sqlite'); new DatabaseSync('node.db').prepare(\"UPDATE users SET role='teacher' WHERE name=?\").run('their-name-here')"
+```
+
 ## File Structure
 
 ```
 project NODE/
 ├── server.js          ← Main server + all routes
+├── auth.js            ← Signup/login + JWT session handling
+├── db.js              ← SQLite setup (accounts)
+├── organize-ocw.js     ← Sorts MIT OCW zip downloads into lessons/
 ├── index.html          ← Student portal frontend
 ├── database.json        ← Comments/messages store
+├── node.db              ← Accounts database (auto-created, git-ignored)
 ├── lessons/            ← Lesson files, organized by subject
 │   ├── Computing/
 │   ├── Education/

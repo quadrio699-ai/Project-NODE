@@ -31,6 +31,7 @@
     <p>Connected Students: <span id="user-count" style="color:#0084ff; font-weight:bold;">0</span></p>
 </div>
 
+  <div id="app-content" style="display:none;">
   <div class="card">
     <h3>📚 Available Lessons</h3>
     <input type="text" id="searchInput" onkeyup="searchFiles()" placeholder="Search courses or topics..." style="width:100%; padding:10px; margin-bottom:10px; border-radius:8px; border:1px solid #ddd;">
@@ -45,23 +46,222 @@
         </div>
         <div id="forum" style="margin-top: 20px;"></div>
     </div>
+  </div>
+
+  <div id="auth-card" class="card">
+      <h3 id="auth-title">Log In</h3>
+
+      <input id="auth-name" placeholder="Your name" style="width:100%; padding:10px; margin-bottom:10px; border-radius:8px; border:1px solid #ddd; box-sizing:border-box;">
+
+      <div id="password-field-wrapper" style="position:relative; margin-bottom:10px;">
+          <input id="auth-password" type="password" placeholder="Password" style="width:100%; padding:10px; padding-right:40px; border-radius:8px; border:1px solid #ddd; box-sizing:border-box;">
+          <span class="eye-toggle" onclick="togglePasswordVisibility('auth-password', this)" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); cursor:pointer; color:#888; display:flex;"></span>
+      </div>
+
+      <div id="signup-recovery-fields" style="display:none;">
+          <select id="recovery-question-select" style="width:100%; padding:10px; margin-bottom:10px; border-radius:8px; border:1px solid #ddd; box-sizing:border-box;">
+              <option value="What's your favorite subject?">What's your favorite subject?</option>
+              <option value="What's your best friend's name?">What's your best friend's name?</option>
+              <option value="What city were you born in?">What city were you born in?</option>
+              <option value="What's your father's first name?">What's your father's first name?</option>
+              <option value="What was your first pet's name?">What was your first pet's name?</option>
+          </select>
+          <input id="recovery-answer" placeholder="Your answer (so you can reset your password later)" style="width:100%; padding:10px; margin-bottom:10px; border-radius:8px; border:1px solid #ddd; box-sizing:border-box;">
+      </div>
+
+      <div id="forgot-question-display" style="display:none; background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:10px; font-size:14px;">
+          <strong id="forgot-question-text"></strong>
+      </div>
+
+      <div id="forgot-answer-field" style="display:none;">
+          <input id="forgot-answer" placeholder="Your answer" style="width:100%; padding:10px; margin-bottom:10px; border-radius:8px; border:1px solid #ddd; box-sizing:border-box;">
+          <div style="position:relative; margin-bottom:10px;">
+              <input id="forgot-new-password" type="password" placeholder="New password" style="width:100%; padding:10px; padding-right:40px; border-radius:8px; border:1px solid #ddd; box-sizing:border-box;">
+              <span class="eye-toggle" onclick="togglePasswordVisibility('forgot-new-password', this)" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); cursor:pointer; color:#888; display:flex;"></span>
+          </div>
+      </div>
+
+      <p id="auth-error" style="color:#f02849; font-size:13px; display:none;"></p>
+      <p id="auth-success" style="color:#42b72a; font-size:13px; display:none;"></p>
+
+      <button id="auth-submit-btn" onclick="submitAuth()" class="btn view-btn" style="width:100%; padding:12px;">Log In</button>
+
+      <p style="text-align:center; margin-top:12px; font-size:14px;">
+          <span id="auth-toggle-text">New here?</span>
+          <a href="#" onclick="setAuthMode('signup'); return false;" id="auth-toggle-link">Create an account</a>
+      </p>
+      <p id="forgot-link-wrapper" style="text-align:center; font-size:13px;">
+          <a href="#" onclick="setAuthMode('forgot'); return false;">Forgot password?</a>
+      </p>
+      <p id="back-to-login-wrapper" style="text-align:center; font-size:13px; display:none;">
+          <a href="#" onclick="setAuthMode('login'); return false;">Back to log in</a>
+      </p>
+  </div>
 
 <script>
-    let currentUser = localStorage.getItem('node_user');
-    let isFirstLoad = true; 
-
-    if (!currentUser) {
-        currentUser = prompt("Enter your name:").trim() || "Guest";
-        localStorage.setItem('node_user', currentUser);
-    }
-    document.getElementById('welcome-user').innerText = "Logged in as: " + currentUser;
+    let currentUser = null;
+    let authToken = localStorage.getItem('node_token');
+    let isFirstLoad = true;
+    let authMode = 'login'; // 'login' | 'signup' | 'forgot'
+    let forgotStep = 1; // within 'forgot' mode: 1 = enter name, 2 = answer + new password
 
     let openFolders = JSON.parse(localStorage.getItem('open_folders')) || {};
 
+    // Simple line-style eye icons, drawn inline so nothing needs the
+    // internet to load (no icon font, no CDN — this has to work offline).
+    const EYE_OPEN_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>';
+    const EYE_SLASH_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';
+
+    function togglePasswordVisibility(inputId, iconEl) {
+        const input = document.getElementById(inputId);
+        if (input.type === 'password') {
+            input.type = 'text';
+            iconEl.innerHTML = EYE_OPEN_SVG;
+        } else {
+            input.type = 'password';
+            iconEl.innerHTML = EYE_SLASH_SVG;
+        }
+    }
+
+    // Start every eye icon in the "hidden" (slashed) state, matching the
+    // password fields starting masked.
+    document.querySelectorAll('.eye-toggle').forEach(el => el.innerHTML = EYE_SLASH_SVG);
+
+    function clearAuthMessages() {
+        document.getElementById('auth-error').style.display = 'none';
+        document.getElementById('auth-success').style.display = 'none';
+    }
+
+    function showAuthError(msg) {
+        const el = document.getElementById('auth-error');
+        el.innerText = msg;
+        el.style.display = 'block';
+    }
+
+    function setAuthMode(mode) {
+        authMode = mode;
+        forgotStep = 1;
+        clearAuthMessages();
+
+        document.getElementById('signup-recovery-fields').style.display = mode === 'signup' ? 'block' : 'none';
+        document.getElementById('password-field-wrapper').style.display = (mode === 'login' || mode === 'signup') ? 'block' : 'none';
+        document.getElementById('auth-name').style.display = (mode === 'login' || mode === 'signup' || (mode === 'forgot' && forgotStep === 1)) ? 'block' : 'none';
+        document.getElementById('forgot-question-display').style.display = 'none';
+        document.getElementById('forgot-answer-field').style.display = 'none';
+        document.getElementById('auth-toggle-text').parentElement.style.display = mode === 'forgot' ? 'none' : 'block';
+        document.getElementById('forgot-link-wrapper').style.display = mode === 'login' ? 'block' : 'none';
+        document.getElementById('back-to-login-wrapper').style.display = mode === 'forgot' ? 'block' : 'none';
+
+        const titles = { login: 'Log In', signup: 'Create Account', forgot: 'Reset Password' };
+        document.getElementById('auth-title').innerText = titles[mode];
+
+        const btnLabels = { login: 'Log In', signup: 'Sign Up', forgot: 'Find My Question' };
+        document.getElementById('auth-submit-btn').innerText = btnLabels[mode];
+
+        document.getElementById('auth-toggle-text').innerText = mode === 'signup' ? 'Already have an account?' : 'New here?';
+        document.getElementById('auth-toggle-link').innerText = mode === 'signup' ? 'Log in' : 'Create an account';
+        document.getElementById('auth-toggle-link').onclick = () => { setAuthMode(mode === 'signup' ? 'login' : 'signup'); return false; };
+    }
+
+    async function submitAuth() {
+        clearAuthMessages();
+        const name = document.getElementById('auth-name').value.trim();
+
+        if (authMode === 'login') {
+            const password = document.getElementById('auth-password').value;
+            if (!name || !password) return showAuthError('Please fill in both fields.');
+            await doLoginOrSignup('/api/login', { name, password });
+
+        } else if (authMode === 'signup') {
+            const password = document.getElementById('auth-password').value;
+            const recoveryQuestion = document.getElementById('recovery-question-select').value;
+            const recoveryAnswer = document.getElementById('recovery-answer').value.trim();
+            if (!name || !password || !recoveryAnswer) return showAuthError('Please fill in every field.');
+            await doLoginOrSignup('/api/signup', { name, password, recoveryQuestion, recoveryAnswer });
+
+        } else if (authMode === 'forgot' && forgotStep === 1) {
+            if (!name) return showAuthError('Enter your name first.');
+            try {
+                const res = await fetch(`/api/recovery-question?name=${encodeURIComponent(name)}`);
+                const data = await res.json();
+                if (!res.ok) return showAuthError(data.error || 'Something went wrong.');
+
+                document.getElementById('forgot-question-text').innerText = data.question;
+                document.getElementById('forgot-question-display').style.display = 'block';
+                document.getElementById('forgot-answer-field').style.display = 'block';
+                document.getElementById('auth-name').style.display = 'none';
+                document.getElementById('auth-submit-btn').innerText = 'Reset Password';
+                forgotStep = 2;
+                window._forgotName = name; // stash since the name field is now hidden
+            } catch (e) { showAuthError('Could not reach the server.'); }
+
+        } else if (authMode === 'forgot' && forgotStep === 2) {
+            const recoveryAnswer = document.getElementById('forgot-answer').value.trim();
+            const newPassword = document.getElementById('forgot-new-password').value;
+            if (!recoveryAnswer || !newPassword) return showAuthError('Please fill in both fields.');
+            try {
+                const res = await fetch('/api/reset-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: window._forgotName, recoveryAnswer, newPassword })
+                });
+                const data = await res.json();
+                if (!res.ok) return showAuthError(data.error || 'Something went wrong.');
+
+                const successEl = document.getElementById('auth-success');
+                successEl.innerText = 'Password reset! You can log in now.';
+                successEl.style.display = 'block';
+                setTimeout(() => setAuthMode('login'), 1500);
+            } catch (e) { showAuthError('Could not reach the server.'); }
+        }
+    }
+
+    async function doLoginOrSignup(endpoint, body) {
+        try {
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            const data = await res.json();
+            if (!res.ok) return showAuthError(data.error || 'Something went wrong.');
+
+            authToken = data.token;
+            currentUser = data.user.name;
+            localStorage.setItem('node_token', authToken);
+            enterApp();
+        } catch (e) { showAuthError('Could not reach the server.'); }
+    }
+
+    function enterApp() {
+        document.getElementById('auth-card').style.display = 'none';
+        document.getElementById('app-content').style.display = 'block';
+        document.getElementById('welcome-user').innerText = "Logged in as: " + currentUser;
+        loadData();
+        setInterval(loadData, 4000);
+    }
+
     function logout() {
-        localStorage.removeItem('node_user');
+        localStorage.removeItem('node_token');
         location.reload();
     }
+
+    // On page load, if we already have a token, confirm it's still valid
+    // (rather than trusting localStorage blindly) before entering the app.
+    async function checkExistingSession() {
+        if (!authToken) return;
+        try {
+            const res = await fetch('/api/me', {
+                headers: { 'Authorization': 'Bearer ' + authToken }
+            });
+            if (!res.ok) { localStorage.removeItem('node_token'); return; }
+            const data = await res.json();
+            currentUser = data.user.name;
+            enterApp();
+        } catch (e) { /* server unreachable, stay on login screen */ }
+    }
+    checkExistingSession();
+    if (!authToken) setAuthMode('login');
 
     // Fix: Ensure search doesn't block folder toggling
     function searchFiles() {
@@ -174,8 +374,7 @@
         loadData();
     }
 
-    setInterval(loadData, 4000);
-    loadData();
+
 </script>
 </body>
 </html>

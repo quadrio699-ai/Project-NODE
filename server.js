@@ -1,6 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const { signup, login, verifyToken, requireRole, getRecoveryQuestion, resetPassword } = require('./auth');
 const app = express();
 
 const DB_FILE = './database.json';
@@ -8,6 +9,21 @@ const DB_FILE = './database.json';
 app.use(express.json());
 app.use(express.static('.'));
 app.use('/lessons', express.static('lessons'));
+
+// --- 0. AUTH ---
+app.post('/api/signup', signup);
+app.post('/api/login', login);
+app.get('/api/recovery-question', getRecoveryQuestion);
+app.post('/api/reset-password', resetPassword);
+
+// Lets the frontend check "am I still logged in?" on page load,
+// and confirms the role (student/teacher) for the logged-in account.
+app.get('/api/me', verifyToken, (req, res) => {
+    res.json({ user: req.user });
+});
+
+// Example of how future teacher-only routes get protected, e.g. an
+// upload endpoint: app.post('/api/upload', verifyToken, requireRole('teacher'), ...)
 
 // Load database or initialize if empty
 let dataStore = { comments: [] };
