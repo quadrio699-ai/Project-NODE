@@ -4,7 +4,11 @@ const path = require('path');
 const { signup, login, verifyToken, requireRole, getRecoveryQuestion, resetPassword } = require('./auth');
 const app = express();
 
-const DB_FILE = './database.json';
+// On Railway, set DATA_DIR to your mounted volume path (e.g. /app/data)
+// so this survives redeploys. Locally, it just defaults to this folder.
+const DATA_DIR = process.env.DATA_DIR || '.';
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+const DB_FILE = path.join(DATA_DIR, 'database.json');
 
 app.use(express.json());
 app.use(express.static('.'));

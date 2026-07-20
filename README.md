@@ -36,7 +36,13 @@ node server.js
 
 Set a `JWT_SECRET` environment variable before deploying anywhere real (on Railway: Variables tab → add `JWT_SECRET` → any long random string). Without it, the server falls back to an insecure default and prints a warning.
 
-⚠️ **Before deploying to Railway for real:** attach a persistent Volume to `node.db` (and `database.json`). Without one, Railway's filesystem resets on every redeploy — meaning every student account and every comment would vanish the next time you push new code. Railway dashboard → your service → Settings → Volumes → mount at the project folder path.
+⚠️ **Before deploying to Railway for real:** attach a persistent Volume, or every student account and comment vanishes on your next `git push`. Steps:
+1. On Railway, press `Cmd/Ctrl + K` (or right-click the project canvas) → **New → Volume**
+2. Attach it to your NODE service, set the mount path to `/app/data`
+3. In the service's **Variables** tab, add `DATA_DIR` = `/app/data`
+4. Redeploy once — after that, accounts and comments persist across every future push
+
+(Don't mount a volume directly over `/app` itself — that hides your newly deployed code behind old volume data on every future push. `/app/data` keeps storage separate from code.)
 
 ## Sorting out MIT OCW downloads
 
