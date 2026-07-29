@@ -73,61 +73,29 @@ app.get('/api/data', (req, res) => {
     });
 
     const baseLessonsPath = path.join(__dirname, 'lessons');
-    let categorizedFiles = {};
 
-    // --- NEW DYNAMIC SCANNER ---
-    // This looks for your new folders: Computing, Education, Engineering, etc.
-    const categories = ['Computing', 'Education', 'Engineering', 'Public Resources', 'Science'];
+    // --- RECURSIVE SCANNER ---
+    // Walks the lessons/ tree to any depth, so it works whether folders
+    // are shaped like Faculty/Department/Level/Course or just flat
+    // subject folders. Each node is { folders: {name: node}, files: [name] }.
+    function scanDir(dirPath) {
+        const node = { folders: {}, files: [] };
+        if (!fs.existsSync(dirPath)) return node;
 
-    categories.forEach(cat => {
-        const catPath = path.join(baseLessonsPath, cat);
-        
-        if (fs.existsSync(catPath) && fs.lstatSync(catPath).isDirectory()) {
-            // Prepare the category structure
-            categorizedFiles[cat] = { _files: [], subTopics: {} };
-            
-            const items = fs.readdirSync(catPath);
-            items.forEach(item => {
-                const itemPath = path.join(catPath, item);
-                
-                if (fs.lstatSync(itemPath).isDirectory()) {
-                    // This handles sub-folders like "Algorithm" or "Programming"
-                    categorizedFiles[cat].subTopics[item] = fs.readdirSync(itemPath)
-                        .filter(f => fs.lstatSync(path.join(itemPath, f)).isFile());
-                } else {
-                    // This handles files directly in the main folder
-                    categorizedFiles[cat]._files.push(item);
-                }
-            });
-        }
-    });
-
-    // Deep Scan Public Resources for Subfolders (e.g., Physics > Electricity)
-    const publicPath = path.join(baseLessonsPath, 'Public Resources');
-    if (fs.existsSync(publicPath)) {
-        let publicData = { subFolders: {} };
-        const subjects = fs.readdirSync(publicPath);
-
-        subjects.forEach(subject => {
-            const subjectPath = path.join(publicPath, subject);
-            if (fs.lstatSync(subjectPath).isDirectory()) {
-                publicData.subFolders[subject] = { _files: [], subTopics: {} };
-                const items = fs.readdirSync(subjectPath);
-                
-                items.forEach(item => {
-                    const itemPath = path.join(subjectPath, item);
-                    if (fs.lstatSync(itemPath).isDirectory()) {
-                        // This handles the subfolders inside Physics
-                        publicData.subFolders[subject].subTopics[item] = fs.readdirSync(itemPath)
-                            .filter(f => fs.lstatSync(path.join(itemPath, f)).isFile());
-                    } else {
-                        publicData.subFolders[subject]._files.push(item);
-                    }
-                });
+        fs.readdirSync(dirPath).forEach(item => {
+            // Skip hidden/system files (.DS_Store, etc.)
+            if (item.startsWith('.')) return;
+            const itemPath = path.join(dirPath, item);
+            if (fs.lstatSync(itemPath).isDirectory()) {
+                node.folders[item] = scanDir(itemPath);
+            } else {
+                node.files.push(item);
             }
         });
-        categorizedFiles['Public Resources'] = publicData;
+        return node;
     }
+
+    const categorizedFiles = scanDir(baseLessonsPath).folders;
 
     // Filter Comments: Only show messages sent AFTER this user's current session began
     let filteredComments = dataStore.comments;
