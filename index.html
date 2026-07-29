@@ -299,24 +299,9 @@
             document.getElementById('user-count').innerText = data.visitorCount;
 
             // Redraw the list (Search is re-applied at the end)
-            let html = "";
-            for (const [level, content] of Object.entries(data.categorizedFiles)) {
-                const isOpen = openFolders[level];
-                const safeId = btoa(level).replace(/=/g, "");
-                
-                html += `
-                    <div class="folder-wrapper">
-                        <div class="folder-header" onclick="toggleFolder('${level}')">
-                            <span>📁 ${level}</span>
-                            <span>${isOpen ? '−' : '+'}</span>
-                        </div>
-                        <div id="${safeId}" class="folder-content" style="display: ${isOpen ? 'block' : 'none'}">
-                            ${renderNestedContent(level, content)}
-                        </div>
-                    </div>`;
-            }
-            // FIXED: document.getElementById (No more 'Flement')
-            document.getElementById('file-list').innerHTML = html;
+            // categorizedFiles is now an arbitrary-depth tree, e.g.
+            // Faculty -> Department -> Level -> Course -> files
+            document.getElementById('file-list').innerHTML = renderFolders("", data.categorizedFiles);
 
             // Re-apply search filter so current search isn't lost on refresh
             searchFiles();
@@ -328,18 +313,37 @@
         } catch (e) { console.log("Sync error", e); }
     }
 
+    // Renders a map of {folderName: {folders, files}} at any depth.
+    // parentPath is the "/"-joined path built up so far (used for
+    // toggle state, download links, and search).
+    function renderFolders(parentPath, foldersMap) {
+        let h = "";
+        for (const [name, node] of Object.entries(foldersMap || {})) {
+            const fullPath = parentPath ? `${parentPath}/${name}` : name;
+            const isOpen = openFolders[fullPath];
+            const safeId = btoa(fullPath).replace(/=/g, "");
+
+            h += `
+                <div class="folder-wrapper">
+                    <div class="folder-header" onclick="toggleFolder('${fullPath}')">
+                        <span>📁 ${name}</span>
+                        <span>${isOpen ? '−' : '+'}</span>
+                    </div>
+                    <div id="${safeId}" class="folder-content" style="display: ${isOpen ? 'block' : 'none'}; padding-left: 14px;">
+                        ${renderNestedContent(fullPath, node)}
+                    </div>
+                </div>`;
+        }
+        return h;
+    }
+
     function renderNestedContent(parent, content) {
         let h = "";
-        if (content.subTopics) {
-            for (const [topic, files] of Object.entries(content.subTopics)) {
-                h += `<div style="margin-bottom: 10px; padding: 10px; background: #f9f9f9; border-radius: 8px; border-left: 4px solid #0084ff;">
-                        <strong style="color: #333; font-size: 14px; display: block; margin-bottom: 5px;">📍 ${topic}</strong>
-                        ${renderFileList(`${parent}/${topic}`, files)}
-                      </div>`;
-            }
+        if (content.folders && Object.keys(content.folders).length > 0) {
+            h += renderFolders(parent, content.folders);
         }
-        if (content._files && content._files.length > 0) {
-            h += renderFileList(parent, content._files);
+        if (content.files && content.files.length > 0) {
+            h += renderFileList(parent, content.files);
         }
         return h;
     }
