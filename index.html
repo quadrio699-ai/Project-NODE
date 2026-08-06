@@ -106,6 +106,7 @@
     let forgotStep = 1; // within 'forgot' mode: 1 = enter name, 2 = answer + new password
 
     let openFolders = JSON.parse(localStorage.getItem('open_folders')) || {};
+    let lastCategorizedFiles = null; // cached tree, so search can restore normal browsing
 
     // Simple line-style eye icons, drawn inline so nothing needs the
     // internet to load (no icon font, no CDN — this has to work offline).
@@ -263,25 +264,51 @@
     checkExistingSession();
     if (!authToken) setAuthMode('login');
 
-    // Fix: Ensure search doesn't block folder toggling
+    // Real search: calls the fuzzy, alias-aware /api/search backend
+    // (handles "Maths" -> Mathematics, typos, etc.) instead of just
+    // filtering whatever's currently visible in the DOM.
+    let searchDebounceTimer = null;
     function searchFiles() {
-        let term = document.getElementById('searchInput').value.toLowerCase();
-        let items = document.getElementsByClassName('lesson-item');
-        let folders = document.getElementsByClassName('folder-wrapper');
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(runSearch, 250);
+    }
 
-        for (let i = 0; i < items.length; i++) {
-            let text = items[i].innerText.toLowerCase();
-            items[i].style.display = text.includes(term) ? "block" : "none";
-        }
+    async function runSearch() {
+        const term = document.getElementById('searchInput').value.trim();
 
-        // Auto-expand folders that contain matches during search
-        if (term !== "") {
-            for (let f = 0; f < folders.length; f++) {
-                if (folders[f].innerText.toLowerCase().includes(term)) {
-                    folders[f].querySelector('.folder-content').style.display = "block";
-                }
+        if (term === "") {
+            // Empty search box -> restore normal folder browsing
+            if (lastCategorizedFiles) {
+                document.getElementById('file-list').innerHTML = renderFolders("", lastCategorizedFiles);
             }
+            return;
         }
+
+        try {
+            const res = await fetch(`/api/search?q=${encodeURIComponent(term)}`);
+            const data = await res.json();
+            document.getElementById('file-list').innerHTML = renderSearchResults(data.courses);
+        } catch (e) {
+            document.getElementById('file-list').innerHTML = `<div style="padding:20px; color:#888;">Search failed — server unreachable.</div>`;
+        }
+    }
+
+    function renderSearchResults(courses) {
+        if (!courses || courses.length === 0) {
+            return `<div style="padding:20px; color:#888;">No matches found.</div>`;
+        }
+        return courses.map(course => `
+            <div class="folder-wrapper" style="margin-bottom: 14px;">
+                <div style="padding: 10px 12px; background:#f4f4f4; border-radius: 8px 8px 0 0;">
+                    <strong>${course.courseTitle || course.path.split('/').pop()}</strong>
+                    <div style="font-size: 12px; color:#777; margin-top:2px;">
+                        ${course.faculty} &rsaquo; ${course.department} &rsaquo; ${course.level}
+                    </div>
+                </div>
+                <div style="padding: 8px 12px;">
+                    ${renderFileList(course.path, course.files)}
+                </div>
+            </div>`).join('');
     }
 
     async function loadData() {
@@ -301,6 +328,7 @@
             // Redraw the list (Search is re-applied at the end)
             // categorizedFiles is now an arbitrary-depth tree, e.g.
             // Faculty -> Department -> Level -> Course -> files
+            lastCategorizedFiles = data.categorizedFiles;
             document.getElementById('file-list').innerHTML = renderFolders("", data.categorizedFiles);
 
             // Re-apply search filter so current search isn't lost on refresh
@@ -349,14 +377,18 @@
     }
 
     function renderFileList(path, files) {
-        return files.map(file => `
+        return files.map(file => {
+            const isMd = file.toLowerCase().endsWith('.md');
+            return `
             <div class="lesson-item">
                 <div style="font-weight: 500;">${file}</div>
                 <div style="margin-top: 8px;">
                     <a href="/lessons/${path}/${file}" target="_blank" class="btn view-btn">Read Online</a>
                     <a href="/api/download/${path}/${file}" class="btn dl-btn">Save Offline</a>
+                    ${isMd ? `<a href="/api/view/${path}/${file}" target="_blank" class="btn view-btn">Print / Save as PDF</a>` : ''}
                 </div>
-            </div>`).join('');
+            </div>`;
+        }).join('');
     }
 
     function toggleFolder(level) {
