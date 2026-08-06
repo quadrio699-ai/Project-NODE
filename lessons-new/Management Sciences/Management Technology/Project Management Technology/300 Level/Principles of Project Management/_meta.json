@@ -1,0 +1,22 @@
+{
+  "courseCode": null,
+  "courseTitle": "Principles of Project Management",
+  "faculty": "Management Sciences",
+  "department": "Management Technology",
+  "level": "300 Level",
+  "topicTags": [
+    "project management",
+    "scheduling",
+    "risk management",
+    "earned value management",
+    "procurement"
+  ],
+  "crossListedWith": [],
+  "sharedWith": [],
+  "prerequisites": [
+    "basic statistics",
+    "introduction to project management (100/200 level)"
+  ],
+  "isCanonical": true,
+  "canonicalPath": null
+}

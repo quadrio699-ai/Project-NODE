@@ -1,0 +1,32 @@
+{
+  "courseCode": null,
+  "courseTitle": "Statistics",
+  "faculty": "Science",
+  "department": "Mathematics",
+  "level": "200 Level",
+  "topicTags": [
+    "statistics",
+    "probability",
+    "hypothesis testing",
+    "regression",
+    "distributions"
+  ],
+  "crossListedWith": [
+    {
+      "faculty": "Management Sciences",
+      "department": "Business Administration",
+      "level": "200 Level"
+    },
+    {
+      "faculty": "Social Sciences",
+      "department": "Economics",
+      "level": "200 Level"
+    }
+  ],
+  "sharedWith": [],
+  "prerequisites": [
+    "basic algebra"
+  ],
+  "isCanonical": true,
+  "canonicalPath": null
+}

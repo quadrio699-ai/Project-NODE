@@ -1,0 +1,21 @@
+{
+  "courseCode": null,
+  "courseTitle": "Statistics for Economics",
+  "faculty": "Social Sciences",
+  "department": "Economics",
+  "level": "200 Level",
+  "topicTags": [
+    "statistics",
+    "econometrics foundations",
+    "economic data"
+  ],
+  "crossListedWith": [],
+  "sharedWith": [
+    "Science/Mathematics/200 Level/Statistics"
+  ],
+  "prerequisites": [
+    "basic algebra"
+  ],
+  "isCanonical": false,
+  "canonicalPath": "Science/Mathematics/200 Level/Statistics"
+}
