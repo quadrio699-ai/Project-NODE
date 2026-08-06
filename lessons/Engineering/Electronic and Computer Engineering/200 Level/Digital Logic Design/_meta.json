@@ -1,0 +1,21 @@
+{
+  "courseCode": null,
+  "courseTitle": "Digital Logic Design",
+  "faculty": "Engineering",
+  "department": "Electronic and Computer Engineering",
+  "level": "200 Level",
+  "topicTags": [
+    "digital logic",
+    "boolean algebra",
+    "circuits",
+    "combinational circuits",
+    "sequential circuits"
+  ],
+  "crossListedWith": [],
+  "sharedWith": [],
+  "prerequisites": [
+    "basic algebra"
+  ],
+  "isCanonical": true,
+  "canonicalPath": null
+}

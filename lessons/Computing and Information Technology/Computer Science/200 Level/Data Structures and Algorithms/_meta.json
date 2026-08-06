@@ -1,0 +1,23 @@
+{
+  "courseCode": null,
+  "courseTitle": "Data Structures and Algorithms",
+  "faculty": "Computing and Information Technology",
+  "department": "Computer Science",
+  "level": "200 Level",
+  "topicTags": [
+    "algorithms",
+    "data structures",
+    "big o",
+    "sorting",
+    "graphs",
+    "recursion"
+  ],
+  "crossListedWith": [],
+  "sharedWith": [],
+  "prerequisites": [
+    "introductory programming",
+    "discrete mathematics"
+  ],
+  "isCanonical": true,
+  "canonicalPath": null
+}
