@@ -138,4 +138,196 @@ app.get('/api/download/*', (req, res) => {
     }
 });
 
+// --- 5. METADATA CATALOG ---
+// Walks lessons/ collecting every _meta.json into one flat list. This is
+// the layer both the future QR offline-broadcast system and the LASU
+// Connect "Learning Materials" pull will read from — a student's
+// faculty/department/level (plus topicTags) determines what's relevant
+// to them, without needing to know the folder structure at all.
+//
+// Non-canonical entries (isCanonical: false — a department's pointer to
+// another department's shared content) get resolved here: their
+// "files" list is filled in from the canonical folder, so a consumer of
+// this endpoint never has to chase canonicalPath references themselves.
+function buildCatalog(dirPath, relPath = '') {
+    let entries = [];
+    if (!fs.existsSync(dirPath)) return entries;
+
+    const metaPath = path.join(dirPath, '_meta.json');
+    if (fs.existsSync(metaPath)) {
+        try {
+            const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+            const files = fs.readdirSync(dirPath)
+                .filter(f => f !== '_meta.json' && !f.startsWith('.') &&
+                    fs.lstatSync(path.join(dirPath, f)).isFile());
+            entries.push({ ...meta, path: relPath, files });
+        } catch (e) {
+            console.warn(`Bad _meta.json at ${metaPath}:`, e.message);
+        }
+        // A course folder is a leaf for cataloging purposes — don't
+        // recurse further even if it somehow has subfolders.
+        return entries;
+    }
+
+    fs.readdirSync(dirPath).forEach(item => {
+        if (item.startsWith('.')) return;
+        const itemPath = path.join(dirPath, item);
+        if (fs.lstatSync(itemPath).isDirectory()) {
+            const childRel = relPath ? `${relPath}/${item}` : item;
+            entries = entries.concat(buildCatalog(itemPath, childRel));
+        }
+    });
+    return entries;
+}
+
+// Resolve non-canonical entries' file lists against their canonical
+// counterpart, so a consumer gets: their own variation files PLUS the
+// canonical files, without extra lookups.
+function resolveCatalog(entries) {
+    const byPath = {};
+    entries.forEach(e => { byPath[e.path] = e; });
+
+    return entries.map(e => {
+        if (e.isCanonical || !e.canonicalPath) return e;
+        const canonical = byPath[e.canonicalPath];
+        if (!canonical) return e;
+        return {
+            ...e,
+            files: [...canonical.files, ...e.files],
+            canonicalTopicTags: canonical.topicTags
+        };
+    });
+}
+
+app.get('/api/catalog', (req, res) => {
+    const baseLessonsPath = path.join(__dirname, 'lessons');
+    const raw = buildCatalog(baseLessonsPath);
+    const catalog = resolveCatalog(raw);
+
+    // Optional filtering — a caller (LASU Connect, or a future QR
+    // broadcaster) can pass ?faculty=&department=&level=&tag= to get
+    // just what's relevant to one student, instead of the whole catalog.
+    const { faculty, department, level, tag } = req.query;
+    let filtered = catalog;
+    if (faculty) filtered = filtered.filter(e => e.faculty === faculty);
+    if (department) filtered = filtered.filter(e => e.department === department);
+    if (level) filtered = filtered.filter(e => e.level === level);
+    if (tag) filtered = filtered.filter(e => (e.topicTags || []).includes(tag));
+
+    res.json({ count: filtered.length, courses: filtered });
+});
+
+// --- 6. FUZZY / ALIAS-AWARE SEARCH ---
+// Handles "Maths" finding "Mathematics", "compsci" finding "Computer
+// Science", and plain typos ("mathamatics") — across faculty,
+// department, courseTitle, and topicTags. Not specific to any one
+// field name, so it works the same way for anything searched.
+
+// Common abbreviations/nicknames -> the canonical word they should
+// resolve to. This list can just keep growing as new mismatches show up
+// — it doesn't need to be exhaustive on day one.
+const SEARCH_ALIASES = {
+    'maths': 'mathematics', 'math': 'mathematics', 'mathematic': 'mathematics',
+    'compsci': 'computer science', 'cs': 'computer science', 'comp sci': 'computer science',
+    'eng': 'engineering',
+    'mgt': 'management', 'mgmt': 'management',
+    'econs': 'economics', 'econ': 'economics',
+    'stats': 'statistics', 'stat': 'statistics',
+    'poli sci': 'political science', 'polsci': 'political science',
+    'psych': 'psychology',
+    'bio': 'biology', 'biochem': 'biochemistry',
+    'chem': 'chemistry',
+    'phy': 'physics', 'phys': 'physics',
+    'ict': 'information and communication technology',
+    'pmt': 'project management technology',
+    'ee': 'electronic and computer engineering', 'ece': 'electronic and computer engineering',
+    'sst': 'science and technology education',
+};
+
+// Basic text normalization shared by every search: lowercase, trim,
+// collapse extra whitespace, strip punctuation. This alone fixes most
+// "user typed it slightly differently" cases before fuzzy matching even
+// has to run.
+function normalize(str) {
+    return String(str || '')
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9\s]/g, '')
+        .replace(/\s+/g, ' ');
+}
+
+// Resolves a normalized query through the alias map. Checked as a whole
+// phrase first ("comp sci" -> "computer science"), then per-word, so
+// multi-word queries still get partial alias resolution.
+function resolveAliases(normalized) {
+    if (SEARCH_ALIASES[normalized]) return SEARCH_ALIASES[normalized];
+    return normalized
+        .split(' ')
+        .map(word => SEARCH_ALIASES[word] || word)
+        .join(' ');
+}
+
+// Standard Levenshtein edit distance — counts the minimum number of
+// single-character insertions/deletions/substitutions to turn one
+// string into another. Used to catch typos an alias map won't cover.
+function levenshtein(a, b) {
+    const m = a.length, n = b.length;
+    const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+    for (let i = 0; i <= m; i++) dp[i][0] = i;
+    for (let j = 0; j <= n; j++) dp[0][j] = j;
+    for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+            dp[i][j] = a[i - 1] === b[j - 1]
+                ? dp[i - 1][j - 1]
+                : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+        }
+    }
+    return dp[m][n];
+}
+
+// A search term "matches" a candidate field if: it's an exact
+// substring match after normalization (handles "Maths" -> "mathematics"
+// via alias, and partial typing like "comp" -> "computer science"), OR
+// its edit distance is small relative to the candidate's length (catches
+// typos like "mathamatics"). The distance threshold scales with word
+// length so short words aren't matched too loosely.
+function fuzzyMatch(query, candidate) {
+    const normQuery = resolveAliases(normalize(query));
+    const normCandidate = normalize(candidate);
+    if (!normQuery || !normCandidate) return false;
+
+    if (normCandidate.includes(normQuery) || normQuery.includes(normCandidate)) {
+        return true;
+    }
+
+    // Compare word-by-word too, so "math" fuzzy-matches the word
+    // "mathematics" inside a longer candidate like "Faculty of Mathematics".
+    const candidateWords = normCandidate.split(' ');
+    return candidateWords.some(word => {
+        const threshold = Math.max(1, Math.floor(Math.max(word.length, normQuery.length) * 0.3));
+        return levenshtein(normQuery, word) <= threshold;
+    });
+}
+
+app.get('/api/search', (req, res) => {
+    const q = req.query.q;
+    if (!q) return res.status(400).json({ error: 'Missing ?q= search term' });
+
+    const baseLessonsPath = path.join(__dirname, 'lessons');
+    const catalog = resolveCatalog(buildCatalog(baseLessonsPath));
+
+    const results = catalog.filter(entry => {
+        const searchableFields = [
+            entry.faculty,
+            entry.department,
+            entry.courseTitle,
+            entry.courseCode,
+            ...(entry.topicTags || [])
+        ];
+        return searchableFields.some(field => field && fuzzyMatch(q, field));
+    });
+
+    res.json({ query: q, count: results.length, courses: results });
+});
+
 app.listen(80, () => console.log("NODE Server Running on Port 80"));
