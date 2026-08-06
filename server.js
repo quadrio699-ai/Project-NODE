@@ -1,6 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const { marked } = require('marked');
 const { signup, login, verifyToken, requireRole, getRecoveryQuestion, resetPassword } = require('./auth');
 const app = express();
 
@@ -308,6 +309,52 @@ function fuzzyMatch(query, candidate) {
         return levenshtein(normQuery, word) <= threshold;
     });
 }
+
+// --- 7. PRINT / SAVE-AS-PDF VIEW ---
+// Converts a .md file to clean, styled HTML on the fly — nothing is
+// stored, so this doesn't add any extra file size to the lessons/
+// folder or the offline broadcast. The student uses their browser's
+// native "Print -> Save as PDF" on the result, which needs no extra
+// backend dependency (no headless Chromium, no PhantomJS).
+app.get('/api/view/*', (req, res) => {
+    const relPath = req.params[0];
+    const filePath = path.join(__dirname, 'lessons', relPath);
+
+    // Guard against path traversal (../../etc)
+    if (!filePath.startsWith(path.join(__dirname, 'lessons'))) {
+        return res.status(400).send('Invalid path');
+    }
+    if (!fs.existsSync(filePath) || !filePath.endsWith('.md')) {
+        return res.status(404).send('File not found or not a markdown file');
+    }
+
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const bodyHtml = marked.parse(raw);
+    const title = path.basename(relPath, '.md');
+
+    res.send(`<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${title}</title>
+<style>
+  body { font-family: Georgia, 'Times New Roman', serif; max-width: 800px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #222; }
+  h1, h2, h3 { font-family: Arial, sans-serif; color: #006633; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+  th, td { border: 1px solid #ccc; padding: 8px 12px; text-align: left; }
+  th { background: #f4f4f4; }
+  code { background: #f4f4f4; padding: 2px 6px; border-radius: 4px; font-family: monospace; }
+  pre { background: #f4f4f4; padding: 12px; border-radius: 6px; overflow-x: auto; }
+  .print-hint { background: #FFD700; padding: 10px 16px; border-radius: 6px; margin-bottom: 24px; font-family: Arial, sans-serif; font-size: 14px; }
+  @media print { .print-hint { display: none; } }
+</style>
+</head>
+<body>
+  <div class="print-hint">Use your browser's Print option (Ctrl/Cmd+P) and choose "Save as PDF" to download this as a PDF.</div>
+  ${bodyHtml}
+</body>
+</html>`);
+});
 
 app.get('/api/search', (req, res) => {
     const q = req.query.q;
