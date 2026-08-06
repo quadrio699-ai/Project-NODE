@@ -84,8 +84,10 @@ app.get('/api/data', (req, res) => {
         if (!fs.existsSync(dirPath)) return node;
 
         fs.readdirSync(dirPath).forEach(item => {
-            // Skip hidden/system files (.DS_Store, etc.)
-            if (item.startsWith('.')) return;
+            // Skip hidden/system files (.DS_Store, etc.) and _meta.json,
+            // which is internal-only metadata (see METADATA_SCHEMA.md) —
+            // not something a student should see in the file browser.
+            if (item.startsWith('.') || item === '_meta.json') return;
             const itemPath = path.join(dirPath, item);
             if (fs.lstatSync(itemPath).isDirectory()) {
                 node.folders[item] = scanDir(itemPath);
