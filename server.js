@@ -429,6 +429,7 @@ app.get('/connect', (req, res) => {
   img { margin: 30px 0; border-radius: 12px; background: #fff; padding: 16px; }
   .url { font-size: 20px; color: #FFD700; word-break: break-all; }
   .hint { color: #999; margin-top: 20px; }
+  .updated { color: #555; font-size: 13px; margin-top: 10px; }
 </style>
 </head>
 <body>
@@ -436,19 +437,53 @@ app.get('/connect', (req, res) => {
   <img id="qr" src="" alt="Loading QR..." width="300" height="300">
   <div class="url" id="url">Detecting...</div>
   <div class="hint">Point your phone's camera at the QR code above, or type the address into your browser.</div>
+  <div class="updated" id="updated"></div>
   <script>
-    fetch('/api/connect-qr')
-      .then(r => r.json())
-      .then(data => {
-        document.getElementById('qr').src = data.qrDataUrl;
-        document.getElementById('url').innerText = data.url;
-      })
-      .catch(() => {
-        document.getElementById('url').innerText = 'Could not detect connection info. Check the server console.';
-      });
+    // Meant to be left open indefinitely on a shared screen, so this
+    // re-fetches the QR every hour — catches the rare case where the
+    // network reassigns this device a new IP address (Wi-Fi reconnect,
+    // router restart) without anyone needing to notice or reload by hand.
+    function refreshQr() {
+      fetch('/api/connect-qr')
+        .then(r => r.json())
+        .then(data => {
+          document.getElementById('qr').src = data.qrDataUrl;
+          document.getElementById('url').innerText = data.url;
+          document.getElementById('updated').innerText = 'Last checked: ' + new Date().toLocaleTimeString();
+        })
+        .catch(() => {
+          document.getElementById('url').innerText = 'Could not detect connection info. Check the server console.';
+        });
+    }
+    refreshQr();
+    setInterval(refreshQr, 60 * 60 * 1000); // every hour
   </script>
 </body>
 </html>`);
 });
 
-app.listen(80, () => console.log("NODE Server Running on Port 80"));
+// --- 9. KIOSK AUTO-LAUNCH ---
+// When this server is the "flagship device" (a screen at an SU office,
+// e-board, etc.), starting it should be the entire setup step — no
+// typing a URL, no finding an IP. This opens the /connect QR page in
+// the default browser automatically. Skipped on a real deployment
+// (Railway, or anywhere with no display) since there's nothing to open
+// a browser window on — set AUTO_OPEN=false to opt out anywhere else.
+function autoOpenConnectPage() {
+    if (process.env.RAILWAY_ENVIRONMENT || process.env.AUTO_OPEN === 'false') return;
+
+    const url = 'http://localhost/connect';
+    const platform = process.platform;
+    const cmd = platform === 'win32' ? `start ${url}`
+        : platform === 'darwin' ? `open ${url}`
+        : `xdg-open ${url}`;
+
+    require('child_process').exec(cmd, (err) => {
+        if (err) console.log(`Could not auto-open browser — visit ${url} manually.`);
+    });
+}
+
+app.listen(80, () => {
+    console.log("NODE Server Running on Port 80");
+    autoOpenConnectPage();
+});
