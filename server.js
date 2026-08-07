@@ -1,6 +1,8 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const QRCode = require('qrcode');
 const { marked } = require('marked');
 const { signup, login, verifyToken, requireRole, getRecoveryQuestion, resetPassword } = require('./auth');
 const app = express();
@@ -377,6 +379,76 @@ app.get('/api/search', (req, res) => {
     });
 
     res.json({ query: q, count: results.length, courses: results });
+});
+
+// --- 8. AUTO-CONNECT QR (Tier 1: on-campus, near a fixed access point) ---
+// Detects this server's own LAN IP address and turns it into a QR code,
+// so nobody has to type an IP address by hand — point a phone camera at
+// a screen showing /connect and it opens the site directly. Meant to be
+// displayed at student union offices, e-boards, or any other fixed
+// on-campus access point.
+function getLanIp() {
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+        for (const iface of interfaces[name]) {
+            // Skip internal (127.0.0.1) and non-IPv4 addresses
+            if (iface.family === 'IPv4' && !iface.internal) {
+                return iface.address;
+            }
+        }
+    }
+    return null;
+}
+
+app.get('/api/connect-qr', async (req, res) => {
+    const ip = getLanIp();
+    if (!ip) return res.status(500).json({ error: 'Could not detect a LAN IP address on this server' });
+
+    const url = `http://${ip}`;
+    try {
+        const qrDataUrl = await QRCode.toDataURL(url, { width: 400, margin: 2 });
+        res.json({ url, qrDataUrl });
+    } catch (e) {
+        res.status(500).json({ error: 'QR generation failed', details: e.message });
+    }
+});
+
+// A simple, large-print page meant to be left open on a shared screen
+// (SU office monitor, e-board) — shows the QR plus the URL as text, in
+// case someone would rather type it than scan.
+app.get('/connect', (req, res) => {
+    res.send(`<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Connect to Project-NODE</title>
+<style>
+  body { font-family: Arial, sans-serif; text-align: center; padding: 60px 20px; background: #0a0a0a; color: #fff; }
+  h1 { color: #006633; }
+  img { margin: 30px 0; border-radius: 12px; background: #fff; padding: 16px; }
+  .url { font-size: 20px; color: #FFD700; word-break: break-all; }
+  .hint { color: #999; margin-top: 20px; }
+</style>
+</head>
+<body>
+  <h1>Scan to Connect — Project-NODE</h1>
+  <img id="qr" src="" alt="Loading QR..." width="300" height="300">
+  <div class="url" id="url">Detecting...</div>
+  <div class="hint">Point your phone's camera at the QR code above, or type the address into your browser.</div>
+  <script>
+    fetch('/api/connect-qr')
+      .then(r => r.json())
+      .then(data => {
+        document.getElementById('qr').src = data.qrDataUrl;
+        document.getElementById('url').innerText = data.url;
+      })
+      .catch(() => {
+        document.getElementById('url').innerText = 'Could not detect connection info. Check the server console.';
+      });
+  </script>
+</body>
+</html>`);
 });
 
 app.listen(80, () => console.log("NODE Server Running on Port 80"));
