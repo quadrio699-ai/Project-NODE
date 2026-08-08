@@ -462,7 +462,253 @@ app.get('/connect', (req, res) => {
 </html>`);
 });
 
-// --- 9. KIOSK AUTO-LAUNCH ---
+// --- 10. QR OFFLINE BROADCAST (Tier 3: peer-to-peer, no network at all) ---
+// Chunks a real file from lessons/ into base64 pieces and generates one
+// QR code image per chunk, server-side. Same protocol validated in the
+// standalone proof-of-concept: "NODE|fileId|index|total|chunkData".
+// The receiving device never talks to this server — it just scans the
+// QR sequence directly off another phone's screen (see /qr-scan below).
+const crypto = require('crypto');
+
+app.get('/api/qr-broadcast/*', async (req, res) => {
+    const relPath = req.params[0];
+    const filePath = path.join(__dirname, 'lessons', relPath);
+
+    if (!filePath.startsWith(path.join(__dirname, 'lessons'))) {
+        return res.status(400).json({ error: 'Invalid path' });
+    }
+    if (!fs.existsSync(filePath) || !fs.lstatSync(filePath).isFile()) {
+        return res.status(404).json({ error: 'File not found' });
+    }
+
+    // Chunk size in base64 characters per QR frame. 300 keeps QR
+    // density low enough to scan reliably while animating (validated
+    // in testing — higher values pack more per frame but produce
+    // denser, harder-to-scan codes).
+    const chunkSize = Math.min(Math.max(parseInt(req.query.chunkSize) || 300, 100), 1000);
+
+    const fileBytes = fs.readFileSync(filePath);
+    const b64 = fileBytes.toString('base64');
+    const fileId = crypto.createHash('md5').update(relPath).digest('hex').slice(0, 8);
+
+    const chunks = [];
+    for (let i = 0; i < b64.length; i += chunkSize) chunks.push(b64.slice(i, i + chunkSize));
+    const total = chunks.length;
+
+    try {
+        const frames = await Promise.all(chunks.map((chunk, idx) => {
+            const payload = `NODE|${fileId}|${idx}|${total}|${chunk}`;
+            return QRCode.toDataURL(payload, { width: 320, margin: 2, errorCorrectionLevel: 'M' });
+        }));
+        res.json({ fileId, fileName: path.basename(relPath), totalFrames: total, frames });
+    } catch (e) {
+        res.status(500).json({ error: 'QR generation failed', details: e.message });
+    }
+});
+
+// Broadcasting device: cycles through the QR frame sequence on screen.
+app.get('/qr-broadcast', (req, res) => {
+    const filePath = req.query.path || '';
+    res.send(`<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Broadcasting — Project-NODE</title>
+<style>
+  body { font-family: Arial, sans-serif; text-align: center; padding: 30px 20px; background: #0a0a0a; color: #fff; }
+  h1 { color: #006633; font-size: 18px; }
+  img { margin: 20px 0; border-radius: 12px; background: #fff; padding: 12px; width: 300px; height: 300px; }
+  .status { color: #FFD700; font-size: 16px; margin-top: 10px; }
+  .controls { margin-top: 20px; }
+  select, button { padding: 8px 14px; border-radius: 8px; border: none; margin: 0 6px; font-size: 14px; }
+  button { background: #006633; color: #fff; cursor: pointer; }
+  .hint { color: #999; font-size: 13px; margin-top: 20px; max-width: 400px; margin-left: auto; margin-right: auto; }
+</style>
+</head>
+<body>
+  <h1 id="fileName">Loading file...</h1>
+  <img id="qrFrame" src="" alt="QR frame">
+  <div class="status" id="status">Frame 0 / 0</div>
+  <div class="controls">
+    <label>Speed:
+      <select id="fps">
+        <option value="500">Slow (2 fps)</option>
+        <option value="250" selected>Normal (4 fps)</option>
+        <option value="150">Fast (~7 fps)</option>
+      </select>
+    </label>
+    <button onclick="toggleLoop()" id="loopBtn">Loop: On</button>
+  </div>
+  <div class="hint">Point another device's camera at this screen using the Scan page. The sequence loops continuously so a receiver can join anytime and just wait for it to cycle back around.</div>
+  <script>
+    let frames = [];
+    let currentFrame = 0;
+    let intervalId = null;
+    let looping = true;
+
+    function toggleLoop() {
+      looping = !looping;
+      document.getElementById('loopBtn').innerText = 'Loop: ' + (looping ? 'On' : 'Off');
+    }
+
+    function showFrame() {
+      if (frames.length === 0) return;
+      document.getElementById('qrFrame').src = frames[currentFrame];
+      document.getElementById('status').innerText = 'Frame ' + (currentFrame + 1) + ' / ' + frames.length;
+      currentFrame++;
+      if (currentFrame >= frames.length) {
+        currentFrame = 0;
+        if (!looping) clearInterval(intervalId);
+      }
+    }
+
+    function startLoop() {
+      clearInterval(intervalId);
+      const fps = document.getElementById('fps').value;
+      intervalId = setInterval(showFrame, parseInt(fps));
+    }
+
+    document.getElementById('fps').addEventListener('change', startLoop);
+
+    fetch('/api/qr-broadcast/${encodeURIComponent(filePath).replace(/%2F/g, '/')}')
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) {
+          document.getElementById('fileName').innerText = 'Error: ' + data.error;
+          return;
+        }
+        frames = data.frames;
+        document.getElementById('fileName').innerText = data.fileName + ' (' + data.totalFrames + ' frames)';
+        startLoop();
+      })
+      .catch(() => {
+        document.getElementById('fileName').innerText = 'Failed to load broadcast data.';
+      });
+  </script>
+</body>
+</html>`);
+});
+
+// Receiving device: camera scan + reconstruction. Uses jsQR (loaded
+// from CDN — this runs on the student's own device, which has normal
+// internet access even though this server's sandbox doesn't).
+app.get('/qr-scan', (req, res) => {
+    res.send(`<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scan — Project-NODE</title>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<style>
+  body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: #0a0a0a; color: #fff; margin: 0; }
+  h1 { color: #006633; font-size: 18px; }
+  video, canvas { width: 100%; max-width: 400px; border-radius: 12px; }
+  canvas { display: none; }
+  .status { color: #FFD700; font-size: 16px; margin: 15px 0; }
+  .progress-bar { background: #333; border-radius: 20px; height: 20px; max-width: 400px; margin: 10px auto; overflow: hidden; }
+  .progress-fill { background: #006633; height: 100%; width: 0%; transition: width 0.2s; }
+  button { padding: 10px 20px; border-radius: 8px; border: none; background: #006633; color: #fff; font-size: 14px; cursor: pointer; margin-top: 15px; }
+  .hint { color: #999; font-size: 13px; margin-top: 15px; max-width: 400px; margin-left: auto; margin-right: auto; }
+</style>
+</head>
+<body>
+  <h1>Scan QR Sequence</h1>
+  <video id="video" playsinline></video>
+  <canvas id="canvas"></canvas>
+  <div class="status" id="status">Point camera at the broadcasting screen</div>
+  <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+  <button id="downloadBtn" style="display:none;" onclick="downloadFile()">Save File</button>
+  <div class="hint">Received frames are kept even out of order — the sequence loops on the broadcaster, so just wait if you missed one.</div>
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    let received = {};
+    let expectedTotal = null;
+    let fileId = null;
+    let fileName = 'received-file';
+    let reconstructedBlob = null;
+
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        video.srcObject = stream;
+        video.setAttribute('playsinline', true);
+        video.play();
+        requestAnimationFrame(scanLoop);
+      } catch (e) {
+        document.getElementById('status').innerText = 'Camera access failed: ' + e.message;
+      }
+    }
+
+    function scanLoop() {
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, imageData.width, imageData.height);
+        if (code) handlePayload(code.data);
+      }
+      if (!reconstructedBlob) requestAnimationFrame(scanLoop);
+    }
+
+    function handlePayload(payload) {
+      const parts = payload.split('|');
+      if (parts.length < 5 || parts[0] !== 'NODE') return;
+      const [, fid, idxStr, totalStr, ...chunkParts] = parts;
+      const chunkData = chunkParts.join('|');
+      const idx = parseInt(idxStr);
+      const total = parseInt(totalStr);
+
+      if (fileId === null) { fileId = fid; expectedTotal = total; }
+      if (fid !== fileId) return; // ignore frames from a different broadcast
+
+      received[idx] = chunkData;
+      updateProgress();
+
+      if (Object.keys(received).length === expectedTotal) {
+        finishReconstruction();
+      }
+    }
+
+    function updateProgress() {
+      const count = Object.keys(received).length;
+      const pct = expectedTotal ? Math.round((count / expectedTotal) * 100) : 0;
+      document.getElementById('status').innerText = 'Received ' + count + ' / ' + (expectedTotal || '?') + ' frames';
+      document.getElementById('progressFill').style.width = pct + '%';
+    }
+
+    function finishReconstruction() {
+      const orderedChunks = [];
+      for (let i = 0; i < expectedTotal; i++) orderedChunks.push(received[i]);
+      const b64 = orderedChunks.join('');
+      const binary = atob(b64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      reconstructedBlob = new Blob([bytes]);
+      document.getElementById('status').innerText = 'Complete! ' + expectedTotal + ' frames received.';
+      document.getElementById('downloadBtn').style.display = 'inline-block';
+      video.srcObject.getTracks().forEach(t => t.stop());
+    }
+
+    function downloadFile() {
+      const url = URL.createObjectURL(reconstructedBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'received-file';
+      a.click();
+    }
+
+    startCamera();
+  </script>
+</body>
+</html>`);
+});
+
+
 // When this server is the "flagship device" (a screen at an SU office,
 // e-board, etc.), starting it should be the entire setup step — no
 // typing a URL, no finding an IP. This opens the /connect QR page in
