@@ -8,38 +8,32 @@
 // you don't have to unzip and drag files around by hand for every course.
 //
 // Usage:
-//   node organize-ocw.js <path-to-zip> <Category> <Topic>
+//   node organize-ocw.js <path-to-zip> <folder/path/inside/lessons>
+//
+// The destination can be any depth now (Faculty/Department/Level/Course),
+// matching lessons/ being a fully recursive tree — there's no fixed
+// category list to keep in sync anymore.
 //
 // Example:
-//   node organize-ocw.js ~/Downloads/6-006-fall-2020.zip Computing Algorithm
+//   node organize-ocw.js ~/Downloads/6-006-fall-2020.zip "Science/Computer Science/300 Level/CSC 301 - Algorithms"
 //
-// This puts the files at: lessons/Computing/Algorithm/
+// This puts the files at:
+//   lessons/Science/Computer Science/300 Level/CSC 301 - Algorithms/
 
 const AdmZip = require('adm-zip');
 const fs = require('fs');
 const path = require('path');
-
-// Must match the category list server.js scans for — anything else
-// silently won't show up in the app.
-const VALID_CATEGORIES = ['Computing', 'Education', 'Engineering', 'Public Resources', 'Science'];
 
 // Lightweight formats only. Lecture videos and audio are skipped on
 // purpose — a single video can be hundreds of MB, which adds up fast
 // and isn't practical to distribute over a local classroom network.
 const KEEP_EXTENSIONS = ['.pdf', '.doc', '.docx', '.txt', '.ppt', '.pptx', '.rtf'];
 
-const [, , zipPath, category, topic] = process.argv;
+const [, , zipPath, destPath] = process.argv;
 
-if (!zipPath || !category || !topic) {
-    console.log('Usage: node organize-ocw.js <path-to-zip> <Category> <Topic>');
-    console.log('Example: node organize-ocw.js ~/Downloads/6-006-fall-2020.zip Computing Algorithm');
-    console.log(`\nValid categories: ${VALID_CATEGORIES.join(', ')}`);
-    process.exit(1);
-}
-
-if (!VALID_CATEGORIES.includes(category)) {
-    console.log(`"${category}" isn't one of the categories NODE recognizes.`);
-    console.log(`Valid categories: ${VALID_CATEGORIES.join(', ')}`);
+if (!zipPath || !destPath) {
+    console.log('Usage: node organize-ocw.js <path-to-zip> <folder/path/inside/lessons>');
+    console.log('Example: node organize-ocw.js ~/Downloads/6-006-fall-2020.zip "Science/Computer Science/300 Level/CSC 301 - Algorithms"');
     process.exit(1);
 }
 
@@ -48,8 +42,13 @@ if (!fs.existsSync(zipPath)) {
     process.exit(1);
 }
 
-const destDir = path.join(__dirname, 'lessons', category, topic);
+const destDir = path.join(__dirname, 'lessons', destPath);
 fs.mkdirSync(destDir, { recursive: true });
+
+// If a .gitkeep placeholder is sitting in this folder, remove it now
+// that real content is landing here.
+const gitkeepPath = path.join(destDir, '.gitkeep');
+if (fs.existsSync(gitkeepPath)) fs.unlinkSync(gitkeepPath);
 
 const zip = new AdmZip(zipPath);
 const entries = zip.getEntries();
@@ -85,5 +84,7 @@ entries.forEach(entry => {
     console.log('Added:', fileName);
 });
 
-console.log(`\nDone — ${copied} files added to lessons/${category}/${topic}`);
+console.log(`\nDone — ${copied} files added to lessons/${destPath}`);
 console.log(`Skipped ${skipped} files (videos, audio, and other heavy formats) — about ${(skippedBytes / 1024 / 1024).toFixed(1)} MB not copied.`);
+
+    
