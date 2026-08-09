@@ -19,7 +19,7 @@ Project NODE is designed around three different ways a student might reach it, b
 - **Local network or public deployment** — runs on Node.js/Express, servable purely over a local intranet on port 80, or deployed publicly (see Deployment below).
 - **Live presence tracking** — a heartbeat system tracks which students are currently online, cleaning up inactive sessions automatically after 10 seconds of inactivity.
 - **Session-scoped messaging** — students only see class comments/messages posted after their current session started.
-- **Faculty → Department → Level → Course lesson library** — lessons are organized to mirror real university structure, not fixed categories, and can be nested to any depth. See `lessons/METADATA_SCHEMA.md` for the full spec and `lessons/CONTRIBUTOR_GUIDE.md` for a plain-language guide to adding content correctly.
+- **Faculty → Department → Level → Course lesson library** — lessons are organized to mirror real university structure, not fixed categories, and can be nested to any depth. See lessons/METADATA_SCHEMA.md for the full spec and `CONTRIBUTOR_GUIDE.md for a plain-language guide to adding content correctly.
 - **Cross-listing without duplication** — a course taught (with variations) across multiple departments — Statistics being the working example — lives once as canonical content, with each department only storing what's actually different for them. See the schema doc for the pattern.
 - **Fuzzy, alias-aware search** — `/api/search?q=` handles typos and abbreviations ("Maths" finds "Mathematics", "compsci" finds "Computer Science") across faculty, department, course name, and topic tags — not just exact matches.
 - **Secure downloads** — students can download lesson files directly through a dedicated download route.
@@ -81,7 +81,7 @@ This app needs **persistent storage** (the SQLite accounts database, the `lesson
 
 Two ways to get content in:
 
-**Manually, following the structure:** see `[/CONTRIBUTOR_GUIDE.md](https://github.com/quadrio699-ai/Project-NODE/blob/main/contributorguide.md)` — written for non-technical contributors, walks through folder naming, the `_meta.json` template, and the cross-listing pattern for shared courses.
+**Manually, following the structure:** see [/CONTRIBUTOR_GUIDE.md](https://github.com/quadrio699-ai/Project-NODE/blob/main/contributorguide.md) — written for non-technical contributors, walks through folder naming, the `_meta.json` template, and the cross-listing pattern for shared courses.
 
 **From MIT OCW downloads:** OCW zips bundle a lot together — lecture notes, assignments, exams, and often huge video/audio files. `organize-ocw.js` pulls out just the lightweight files (PDFs, docs, slides) and drops them into the right lesson folder, skipping videos/audio (usually hundreds of MB each and impractical to hand out over a local network or QR broadcast).
 
@@ -154,6 +154,8 @@ Actively expanding from a single-classroom proof of concept into a LASU-wide pil
 
 ## Credits
 
-Built by [Quadri Marvellous Al-ameen](https://github.com/quadrio699-ai)
-Improved upon by [Daniel Savior Ozoemena](https://github.com/lord-saviord1) / [Cipher PR](https://lord-saviord1.github.io/siteaboutme/)
+Built by [Quadri Marvellous Al-ameen](https://github.com/quadrio699-ai).
+
+Improved upon by [Daniel Savior Ozoemena](https://github.com/lord-saviord1) / [Cipher PR](https://lord-saviord1.github.io/siteaboutme/).
+
 Expanded with LASU-wide faculty/department structure, metadata and search, the three-tier offline access system, PWA support, and the LASU Connect integration groundwork, as part of an ongoing collaboration.
