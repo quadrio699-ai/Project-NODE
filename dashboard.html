@@ -44,8 +44,24 @@
     <h2 style="margin: 5px 0;">Network of Digital Equity</h2>
     <p id="welcome-user" style="font-weight: bold;"></p>
     <a href="/qr-scan" target="_blank" class="btn" style="background:#FFD700; color:#222; margin-bottom:10px; margin-right:6px;">Scan to Receive Files (No Internet)</a>
+    <button id="upload-toggle-btn" onclick="toggleUploadForm()" class="btn" style="display:none; background:#0084ff; color:white; margin-bottom:10px; margin-right:6px;">Upload Material</button>
     <button onclick="logout()" class="btn" style="background:#ff4d4d; color:white; margin-bottom:10px;">Logout</button>
     <p>Connected Students: <span id="user-count" style="color:#0084ff; font-weight:bold;">0</span></p>
+
+    <div id="upload-form" style="display:none; text-align:left; background:#f8f9fa; padding:16px; border-radius:12px; margin-top:10px;">
+        <h4 style="margin-top:0;">Upload Course Material</h4>
+        <div id="upload-status" style="margin-bottom:8px; font-size:13px;"></div>
+        <input type="text" id="up-faculty" list="faculty-list" placeholder="Faculty (start typing to see existing ones)" onchange="loadDepartmentOptions()" style="width:100%; padding:8px; margin-bottom:6px; border-radius:6px; border:1px solid #ddd;">
+        <datalist id="faculty-list"></datalist>
+        <input type="text" id="up-department" list="department-list" placeholder="Department (existing ones for this faculty will suggest once typed)" style="width:100%; padding:8px; margin-bottom:6px; border-radius:6px; border:1px solid #ddd;">
+        <datalist id="department-list"></datalist>
+        <input type="text" id="up-level" placeholder="Level (e.g. 200 Level)" style="width:100%; padding:8px; margin-bottom:6px; border-radius:6px; border:1px solid #ddd;">
+        <input type="text" id="up-courseTitle" placeholder="Course Title (e.g. Linear Algebra)" style="width:100%; padding:8px; margin-bottom:6px; border-radius:6px; border:1px solid #ddd;">
+        <input type="text" id="up-courseCode" placeholder="Course Code (optional, e.g. MTH 201)" style="width:100%; padding:8px; margin-bottom:6px; border-radius:6px; border:1px solid #ddd;">
+        <input type="text" id="up-topicTags" placeholder="Topic tags, comma separated (e.g. algebra, matrices)" style="width:100%; padding:8px; margin-bottom:6px; border-radius:6px; border:1px solid #ddd;">
+        <input type="file" id="up-file" style="width:100%; padding:8px; margin-bottom:10px;">
+        <button onclick="submitUpload()" class="btn" style="background:#42b72a; color:white;">Submit</button>
+    </div>
 </div>
 
   <div id="app-content" style="display:none;">
@@ -117,6 +133,7 @@
 
 <script>
     let currentUser = null;
+    let currentUserRole = null;
     let authToken = localStorage.getItem('node_token');
     let isFirstLoad = true;
     let authMode = 'login'; // 'login' | 'signup' | 'forgot'
@@ -246,6 +263,7 @@
 
             authToken = data.token;
             currentUser = data.user.name;
+            currentUserRole = data.user.role;
             localStorage.setItem('node_token', authToken);
             enterApp();
         } catch (e) { showAuthError('Could not reach the server.'); }
@@ -254,7 +272,10 @@
     function enterApp() {
         document.getElementById('auth-card').style.display = 'none';
         document.getElementById('app-content').style.display = 'block';
-        document.getElementById('welcome-user').innerText = "Logged in as: " + currentUser;
+        document.getElementById('welcome-user').innerText = "Logged in as: " + currentUser + (currentUserRole === 'teacher' ? ' (Teacher)' : '');
+        if (currentUserRole === 'teacher') {
+            document.getElementById('upload-toggle-btn').style.display = 'inline-block';
+        }
         loadData();
         setInterval(loadData, 4000);
     }
@@ -264,199 +285,34 @@
         location.reload();
     }
 
-    // On page load, if we already have a token, confirm it's still valid
-    // (rather than trusting localStorage blindly) before entering the app.
-    async function checkExistingSession() {
-        if (!authToken) return;
+    function toggleUploadForm() {
+        const form = document.getElementById('upload-form');
+        const wasHidden = form.style.display === 'none';
+        form.style.display = wasHidden ? 'block' : 'none';
+        if (wasHidden) loadFacultyOptions();
+    }
+
+    async function loadFacultyOptions() {
         try {
-            const res = await fetch('/api/me', {
-                headers: { 'Authorization': 'Bearer ' + authToken }
-            });
-            if (!res.ok) { localStorage.removeItem('node_token'); return; }
+            const res = await fetch('/api/faculties');
             const data = await res.json();
-            currentUser = data.user.name;
-            enterApp();
-        } catch (e) { /* server unreachable, stay on login screen */ }
-    }
-    checkExistingSession();
-    if (!authToken) setAuthMode('login');
-
-    // Real search: calls the fuzzy, alias-aware /api/search backend
-    // (handles "Maths" -> Mathematics, typos, etc.) instead of just
-    // filtering whatever's currently visible in the DOM.
-    let searchDebounceTimer = null;
-    function searchFiles() {
-        clearTimeout(searchDebounceTimer);
-        searchDebounceTimer = setTimeout(runSearch, 250);
+            document.getElementById('faculty-list').innerHTML =
+                data.faculties.map(f => `<option value="${f}">`).join('');
+        } catch (e) { /* autocomplete is a nicety, not critical — fail silently */ }
     }
 
-    async function runSearch() {
-        const term = document.getElementById('searchInput').value.trim();
-
-        if (term === "") {
-            // Empty search box -> restore normal folder browsing
-            if (lastCategorizedFiles) {
-                document.getElementById('file-list').innerHTML = renderFolders("", lastCategorizedFiles);
-            }
-            return;
-        }
-
+    async function loadDepartmentOptions() {
+        const faculty = document.getElementById('up-faculty').value.trim();
+        if (!faculty) return;
         try {
-            const res = await fetch(`/api/search?q=${encodeURIComponent(term)}`);
+            const res = await fetch(`/api/departments?faculty=${encodeURIComponent(faculty)}`);
             const data = await res.json();
-            document.getElementById('file-list').innerHTML = renderSearchResults(data.courses);
-        } catch (e) {
-            document.getElementById('file-list').innerHTML = `<div style="padding:20px; color:#888;">Search failed — server unreachable.</div>`;
-        }
+            document.getElementById('department-list').innerHTML =
+                (data.departments || []).map(d => `<option value="${d}">`).join('');
+        } catch (e) { /* fail silently */ }
     }
 
-    function renderSearchResults(courses) {
-        if (!courses || courses.length === 0) {
-            return `<div style="padding:20px; color:#888;">No matches found.</div>`;
-        }
-        return courses.map(course => `
-            <div class="folder-wrapper" style="margin-bottom: 14px;">
-                <div style="padding: 10px 12px; background:#f4f4f4; border-radius: 8px 8px 0 0;">
-                    <strong>${course.courseTitle || course.path.split('/').pop()}</strong>
-                    <div style="font-size: 12px; color:#777; margin-top:2px;">
-                        ${course.faculty} &rsaquo; ${course.department} &rsaquo; ${course.level}
-                    </div>
-                </div>
-                <div style="padding: 8px 12px;">
-                    ${renderFileList(course.path, course.files)}
-                </div>
-            </div>`).join('');
-    }
-
-    async function loadData() {
-        try {
-            await fetch('/api/heartbeat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ student: currentUser, isNewLogin: isFirstLoad })
-            });
-            isFirstLoad = false;
-
-            const res = await fetch(`/api/data?user=${encodeURIComponent(currentUser)}`);
-            const data = await res.json();
-            
-            document.getElementById('user-count').innerText = data.visitorCount;
-
-            // Redraw the list (Search is re-applied at the end)
-            // categorizedFiles is now an arbitrary-depth tree, e.g.
-            // Faculty -> Department -> Level -> Course -> files
-            lastCategorizedFiles = data.categorizedFiles;
-            document.getElementById('file-list').innerHTML = renderFolders("", data.categorizedFiles);
-
-            // Re-apply search filter so current search isn't lost on refresh
-            searchFiles();
-
-            // Update Peer Discussion
-            document.getElementById('forum').innerHTML = data.comments.map(c => `
-                <div class="msg"><strong>${c.student}:</strong> ${c.text}</div>`).join('');
-                
-        } catch (e) { console.log("Sync error", e); }
-    }
-
-    // Renders a map of {folderName: {folders, files}} at any depth.
-    // parentPath is the "/"-joined path built up so far (used for
-    // toggle state, download links, and search).
-    function renderFolders(parentPath, foldersMap, depth = 0) {
-        let h = "";
-        for (const [name, node] of Object.entries(foldersMap || {})) {
-            const fullPath = parentPath ? `${parentPath}/${name}` : name;
-            const isOpen = openFolders[fullPath];
-            const safeId = btoa(fullPath).replace(/=/g, "");
-            // Only the top level (faculties) gets the full bordered/
-            // shadowed card look. Deeper levels (department, level,
-            // course) use a lighter left-border-only style so nesting
-            // doesn't stack into a wall of boxes-within-boxes on a
-            // narrow screen.
-            const wrapperClass = depth === 0 ? 'folder-wrapper' : 'folder-wrapper nested';
-
-            h += `
-                <div class="${wrapperClass}">
-                    <div class="folder-header" onclick="toggleFolder('${fullPath}')">
-                        <span>📁 ${name}</span>
-                        <span>${isOpen ? '−' : '+'}</span>
-                    </div>
-                    <div id="${safeId}" class="folder-content" style="display: ${isOpen ? 'block' : 'none'};">
-                        ${renderNestedContent(fullPath, node, depth + 1)}
-                    </div>
-                </div>`;
-        }
-        return h;
-    }
-
-    function renderNestedContent(parent, content, depth = 1) {
-        let h = "";
-        if (content.folders && Object.keys(content.folders).length > 0) {
-            h += renderFolders(parent, content.folders, depth);
-        }
-        if (content.files && content.files.length > 0) {
-            h += renderFileList(parent, content.files);
-        }
-        return h;
-    }
-
-    function renderFileList(path, files) {
-        return files.map(file => {
-            const isMd = file.toLowerCase().endsWith('.md');
-            const fullFilePath = `${path}/${file}`;
-            const qrBroadcastLink = `/qr-broadcast?path=${encodeURIComponent(fullFilePath)}`;
-            return `
-            <div class="lesson-item">
-                <div style="font-weight: 500;">${file}</div>
-                <div style="margin-top: 8px;">
-                    <a href="/lessons/${path}/${file}" target="_blank" class="btn view-btn">Read Online</a>
-                    <a href="/api/download/${path}/${file}" class="btn dl-btn">Save Offline</a>
-                    ${isMd ? `<a href="/api/view/${path}/${file}" target="_blank" class="btn view-btn">Print / Save as PDF</a>` : ''}
-                    <a href="${qrBroadcastLink}" target="_blank" class="btn qr-btn">Share via QR</a>
-                </div>
-            </div>`;
-        }).join('');
-    }
-
-    function toggleFolder(level) {
-        const isCurrentlyOpen = openFolders[level];
-        const parent = level.includes('/') ? level.substring(0, level.lastIndexOf('/')) : '';
-
-        // Opening this folder: close any sibling (same parent) that's
-        // currently open, so faculty/department dropdowns behave as an
-        // accordion instead of cascading indefinitely down the page.
-        if (!isCurrentlyOpen) {
-            Object.keys(openFolders).forEach(key => {
-                if (key === level) return;
-                const keyParent = key.includes('/') ? key.substring(0, key.lastIndexOf('/')) : '';
-                if (keyParent === parent) {
-                    openFolders[key] = false;
-                }
-            });
-        }
-
-        openFolders[level] = !isCurrentlyOpen;
-        localStorage.setItem('open_folders', JSON.stringify(openFolders));
-        loadData();
-    }
-
-    async function sendMsg() {
-        const input = document.getElementById('msg');
-        const text = input.value.trim();
-        if (!text) return;
-        await fetch('/api/comment', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ student: currentUser, text })
-        });
-        input.value = '';
-        loadData();
-    }
-
-    // Basic PWA install / offline shell support
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/service-worker.js').catch(() => {});
-    }
-
-</script>
-</body>
-</html>
+    async function submitUpload() {
+        const statusEl = document.getElementById('upload-status');
+        const faculty = document.getElementById('up-faculty').value.trim();
+        const department = document.getElementById('up-de
