@@ -33,28 +33,17 @@ REM just vanishing.
 set AUTO_OPEN=false
 start "ProjectNODE-Server" cmd /k "node server.js"
 
-REM --- Step 3: wait for the server to actually respond, not just a ---
-REM --- fixed guess at how long it might take ---
-echo Waiting for the server to be ready...
-set /a attempts=0
-:waitloop
-set /a attempts+=1
-timeout /t 1 /nobreak >nul
-curl -s -o nul -w "" http://localhost/connect 2>nul
-if %errorlevel%==0 goto serverready
-if %attempts% geq 15 goto servertimeout
-goto waitloop
-
-:servertimeout
-echo.
-echo The server did not respond after 15 seconds.
-echo Check the "ProjectNODE-Server" window for an error message.
-pause
-exit /b 1
-
-:serverready
-echo Server is up.
-echo.
+REM --- Step 3: give the server a moment to actually start ---
+REM Previously this polled http://localhost/connect using curl - but
+REM curl isn't guaranteed to exist on every Windows install (only
+REM bundled by default since a 2018 update, and some locked-down PCs
+REM strip it out). If curl was missing, this check silently failed
+REM every time and skipped straight to timeout, so the browser never
+REM opened - even though the server itself was working fine. Using
+REM "ping" instead as a simple delay, since ping.exe ships on every
+REM single Windows install with no exceptions.
+echo Waiting a few seconds for the server to start...
+ping 127.0.0.1 -n 5 >nul
 
 REM --- Step 4: open the display, in real kiosk mode if we can find a ---
 REM --- Chromium-based browser (Chrome OR Edge), otherwise just open ---
@@ -79,6 +68,8 @@ if exist %CHROME_PATH% (
 )
 
 echo.
-echo Setup complete. This window can stay open for reference, or you can close it -
-echo the server keeps running in the separate "ProjectNODE-Server" window regardless.
+echo Setup complete. If the page shows an error, just refresh it once -
+echo the server may need one more second. This window can stay open for
+echo reference, or you can close it - the server keeps running in the
+echo separate "ProjectNODE-Server" window regardless.
 pause
