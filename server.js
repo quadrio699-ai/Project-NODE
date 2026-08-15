@@ -814,7 +814,15 @@ function autoOpenConnectPage() {
     });
 }
 
-app.listen(80, () => {
-    console.log("NODE Server Running on Port 80");
+// Most hosting platforms (Render, Railway, etc.) assign their own port
+// via a PORT environment variable and expect the app to listen on it —
+// hardcoding 80 would break deployment there. Locally/on a LAN, no
+// PORT variable is set, so this still defaults to 80 exactly as
+// before — nothing changes for kiosk mode, /connect, or any existing
+// local setup instructions.
+const PORT = process.env.PORT || 80;
+
+app.listen(PORT, () => {
+    console.log(`NODE Server Running on Port ${PORT}`);
     autoOpenConnectPage();
 });
