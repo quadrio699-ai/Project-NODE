@@ -3,7 +3,7 @@
 # separate build step needed, since the frontend is plain HTML/CSS/JS
 # with no framework/bundler in the way.
 
-FROM node:20-slim
+FROM node:24-slim
 
 WORKDIR /app
 
