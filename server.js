@@ -15,9 +15,19 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 const DB_FILE = path.join(DATA_DIR, 'database.json');
 
 app.use(express.json());
+
+// Block direct downloads of the database and server source files.
+// express.static('.') below serves the whole project folder, which
+// would otherwise let anyone fetch /node.db (real user password
+// hashes), /database.json (real comments), or the server code itself,
+// just by requesting the exact filename.
+app.use((req, res, next) => {
+    const blocked = /\.(db|db-shm|db-wal)$|^\/database\.json$|^\/server\.js$|^\/db\.js$|^\/auth\.js$|^\/package(-lock)?\.json$/;
+    if (blocked.test(req.path)) return res.status(404).end();
+    next();
+});
 app.use(express.static('.'));
 app.use('/lessons', express.static('lessons'));
-
 // --- 0. AUTH ---
 app.post('/api/signup', signup);
 app.post('/api/login', login);
