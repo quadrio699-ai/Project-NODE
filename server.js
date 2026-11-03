@@ -22,7 +22,7 @@ app.use(express.json());
 // hashes), /database.json (real comments), or the server code itself,
 // just by requesting the exact filename.
 app.use((req, res, next) => {
-    const blocked = /\.(db|db-shm|db-wal)$|^\/database\.json$|^\/server\.js$|^\/db\.js$|^\/auth\.js$|^\/package(-lock)?\.json$/;
+    const blocked = /\.(db|db-shm|db-wal)$|^\/database\.json$|^\/server\.js$|^\/(auth|ai|mock-llm|test-ai)\.js$|^\/auth\.js$|^\/package(-lock)?\.json$/;
     if (blocked.test(req.path)) return res.status(404).end();
     next();
 });
@@ -36,9 +36,12 @@ app.post('/api/reset-password', resetPassword);
 
 // Lets the frontend check "am I still logged in?" on page load,
 // and confirms the role (student/teacher) for the logged-in account.
-app.get('/api/me', verifyToken, (req, res) => {
+app.get('/api/me' , verifyToken, (req, res) => {
     res.json({ user: req.user });
 });
+
+// --- AI TUTOR (see ai.js) ---
+require('./ai').mount(app, { verifyToken, requireRole });
 
 // --- FACULTY/DEPARTMENT LOOKUP (for upload autocomplete) ---
 // Reads real folder names directly off disk, not the metadata catalog —
