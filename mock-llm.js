@@ -1,9 +1,6 @@
-// mock-llm.js — a tiny fake model server for testing NODE's AI plumbing
-// WITHOUT Ollama. It speaks the same OpenAI-compatible streaming format.
-// It also deliberately wraps part of its reply in <think> tags, split across
-// chunks, to prove ai.js strips them correctly.
-//
-//   node mock-llm.js            (listens on port 11500)
+@'
+// mock-llm.js - a tiny fake model server for testing NODE's AI plumbing
+// without Ollama. It speaks the same OpenAI-compatible streaming format.
 const http = require('http');
 
 function start(port = 11500) {
@@ -44,3 +41,4 @@ function start(port = 11500) {
 
 module.exports = { start };
 if (require.main === module) start().then(() => console.log('Mock model server on http://127.0.0.1:11500/v1'));
+'@ | Set-Content -Path mock-llm.js -Encoding ascii
