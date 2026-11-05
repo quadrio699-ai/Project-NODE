@@ -5,7 +5,7 @@
 // network-first fallback for everything else (API calls, lesson files)
 // so students always get fresh content when they DO have a connection.
 
-const CACHE_NAME = 'project-node-shell-v2';
+const CACHE_NAME = 'project-node-shell-v3';
 const SHELL_FILES = [
     '/',
     '/index.html',
