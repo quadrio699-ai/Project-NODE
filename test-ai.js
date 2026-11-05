@@ -73,6 +73,7 @@ async function readSSE(resp) {
     check('notes were sent to the model', /notes used: [1-9]/.test(answer), answer);
     check('/no_think added for qwen3', calls.at(-1).messages[1].content.endsWith('/no_think'));
     check('output capped', calls.at(-1).max_tokens === 350);
+    check('thinking switched off via reasoning_effort', calls.at(-1).reasoning_effort === 'none');
 
     const before = calls.length;
     r = await post('/api/ai/ask', { question: 'what is a basis of a vector space' });
@@ -82,6 +83,12 @@ async function readSSE(resp) {
     r = await post('/api/ai/ask', { question: 'Why does horizontal velocity stay constant in projectile motion?', stream: false });
     const j = await r.json();
     check('ungrounded question uses general-knowledge prompt', calls.at(-1).messages[0].content.includes('No course notes matched') && j.grounded === false && j.sources.length === 0);
+
+    const callsBefore = calls.length;
+    let tr = await (await post('/api/ai/ask', { question: 'TRUNCATE explain linear independence', stream: false })).json();
+    check('cut-off answer carries a notice', /cut short/.test(tr.answer), tr.answer);
+    await (await post('/api/ai/ask', { question: 'TRUNCATE explain linear independence', stream: false })).json();
+    check('cut-off answer is NOT cached (model called twice)', calls.length === callsBefore + 2, String(calls.length - callsBefore));
 
     r = await post('/api/ai/feedback', { logId: meta.logId, rating: 1 });
     check('feedback accepted', (await r.json()).success === true);

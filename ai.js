@@ -56,6 +56,7 @@ const CFG = {
     noThink: process.env.AI_NO_THINK ? process.env.AI_NO_THINK === 'true' : /qwen3/i.test(MODEL),
     logQuestions: process.env.AI_LOG_QUESTIONS !== 'false',
     minCoverage: parseFloat(process.env.AI_MIN_COVERAGE || '0.5'),
+    debug: process.env.AI_DEBUG === 'true',
     cacheDays: 30,
     timeoutMs: 120000,
 };
@@ -402,6 +403,10 @@ async function streamCompletion(messages, signal, onDelta) {
             stream: true,
             max_tokens: CFG.maxOutputTokens,
             temperature: 0.3,
+            // Ollama's OpenAI-compatible API only switches thinking off when it
+            // receives this field. Without it, Qwen3 spends every token
+            // "thinking" and returns an empty answer.
+            ...(CFG.noThink ? { reasoning_effort: 'none' } : {}),
         }),
     });
     if (!resp.ok) {
@@ -412,6 +417,8 @@ async function streamCompletion(messages, signal, onDelta) {
     }
     const decoder = new TextDecoder();
     let buf = '';
+    let finishReason = null;
+    let seen = 0;
     for await (const chunk of resp.body) {
         buf += decoder.decode(chunk, { stream: true });
         let idx;
@@ -420,13 +427,17 @@ async function streamCompletion(messages, signal, onDelta) {
             buf = buf.slice(idx + 1);
             if (!line.startsWith('data:')) continue;
             const data = line.slice(5).trim();
-            if (data === '[DONE]') return;
+            if (data === '[DONE]') return { finishReason };
             try {
-                const delta = JSON.parse(data).choices?.[0]?.delta?.content;
+                const choice = JSON.parse(data).choices?.[0];
+                if (CFG.debug && seen++ < 12) console.log('AI raw chunk:', data.slice(0, 300));
+                if (choice?.finish_reason) finishReason = choice.finish_reason;
+                const delta = choice?.delta?.content;
                 if (delta) onDelta(delta);
             } catch { /* partial or non-JSON line — skip */ }
         }
     }
+    return { finishReason };
 }
 
 // ---------------------------------------------------------------------------
@@ -469,7 +480,7 @@ function normalizeQuestion(q) {
 }
 function cacheKey(question, course, grounded, sig) {
     return crypto.createHash('sha256')
-        .update([normalizeQuestion(question), course, CFG.model, grounded ? 'g' : 'u', sig].join('|'))
+        .update(['v2', normalizeQuestion(question), course, CFG.model, grounded ? 'g' : 'u', sig].join('|'))
         .digest('hex');
 }
 function getCache(key) {
@@ -592,7 +603,7 @@ async function handleAsk(req, res) {
             if (wantStream) send({ type: 'token', text });
         };
 
-        await streamCompletion(buildMessages(question, hits, grounded), ac.signal, d => {
+        const { finishReason } = await streamCompletion(buildMessages(question, hits, grounded), ac.signal, d => {
             const t = filter.push(d);
             if (t) emit(t);
         });
@@ -602,7 +613,18 @@ async function handleAsk(req, res) {
         answer = answer.trim();
         if (!answer) throw new Error('The model returned an empty answer.');
 
-        setCache(key, answer, sources, grounded);
+        // Only remember answers that look finished. A cut-off answer must not
+        // be served to every future student who asks the same thing.
+        const cutOff = finishReason === 'length';
+        const looksComplete = /[.!?)\]`"'*\d]\s*$/.test(answer);
+        console.log(`🤖 AI answered: ${answer.split(/\s+/).length} words, finish=${finishReason}, ` +
+            `${Date.now() - t0}ms, grounded=${grounded}${cutOff || !looksComplete ? ' (NOT cached: looks cut off)' : ''}`);
+        if (cutOff) {
+            const note = '\n\n(This answer was cut short. Ask about one specific part to get more detail.)';
+            answer += note;
+            if (wantStream) send({ type: 'token', text: note });
+        }
+        if (!cutOff && looksComplete) setCache(key, answer, sources, grounded);
         finishLog(logId, { ok: true, cached: false, ms: Date.now() - t0 });
         finished = true;
         if (wantStream) { send({ type: 'done', ms: Date.now() - t0 }); res.end(); }
