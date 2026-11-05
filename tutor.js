@@ -50,7 +50,7 @@
     card.id = 'node-tutor';
     card.style.display = 'none';
     card.innerHTML =
-        '<h3>\uD83E\uDD16 NODE Tutor</h3>' +
+        '<h3>NODE Tutor</h3>' +
         '<p class="nt-sub">Ask about your course notes. Answers point to the notes they came from.</p>' +
         '<div id="nt-log" aria-live="polite"></div>' +
         '<div class="nt-row">' +
