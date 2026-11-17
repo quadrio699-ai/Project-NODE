@@ -1,4 +1,4 @@
-// ai.js — NODE AI Tutor
+// ai.js — NODE AI Tutor (a study aid, limited to the stored course materials)
 //
 // One module that does three jobs:
 //   1. RETRIEVAL  — reads the markdown lessons under /lessons, cuts them into
@@ -6,11 +6,26 @@
 //                   keyword ranking; no extra model, no extra dependency).
 //   2. GATEWAY    — sends the question + chunks to ANY OpenAI-compatible model
 //                   server. Tier 1 = local Ollama. Tier 2 = a hosted API.
-//                   The only difference between tiers is environment variables.
-//   3. SAFETY     — login required, per-user rate limit, a queue so a small
-//                   server isn't overwhelmed, an answer cache, and a usage log.
+//   3. SAFETY     — login required, per-user rate limit, queue, answer cache.
 //
-// No new npm packages. Uses Node's built-in fetch and the existing node:sqlite.
+// PRIVACY AND SCOPE (what this module guarantees):
+//   * It answers ONLY from the lesson files. If the notes do not cover a
+//     question it says so and does not call the model at all.
+//   * It has NO access to the accounts database. It never requires db.js and
+//     keeps its own data in a separate file (ai.db). The model only ever
+//     receives the student's question plus text passages from /lessons.
+//   * Questions are NEVER stored. They live in memory only long enough to be
+//     answered. The log keeps no question text, only counts (answered or not,
+//     how long it took, helpful / not helpful).
+//   * Nothing it stores is linked to an account: no user id, name or email.
+//   * Questions are scrubbed of obvious personal details (emails, phone
+//     numbers, long ID-like numbers, "password is ...") before they are
+//     searched or sent to the model.
+//   * If a student chooses to send a report, only the answer shown and what
+//     they type in the report form are kept. Logs, reports and cached
+//     answers are deleted after AI_LOG_DAYS (30).
+//
+// No new npm packages. Uses Node's built-in fetch and node:sqlite.
 //
 // ENVIRONMENT VARIABLES (all optional — defaults suit a local Ollama):
 //   AI_BASE_URL         default http://127.0.0.1:11434/v1   (Ollama's OpenAI-compatible API)
@@ -23,9 +38,8 @@
 //   AI_CONTEXT_CHUNKS   lesson chunks sent with a question   (default 2)
 //   AI_CHUNK_MAX_CHARS  max size of one chunk                (default 800)
 //   AI_RATE_PER_MIN     questions per user per minute        (default 6)
-//   AI_STRICT           "true" = refuse when notes don't cover the question
-//   AI_NO_THINK         force on/off Qwen3's "/no_think" switch (auto-on for qwen3 models)
-//   AI_LOG_QUESTIONS    "false" = don't store question text in the usage log
+//   AI_LOG_DAYS         days to keep logs, reports, cached answers (default 30)
+//   AI_NO_THINK         force on/off Qwen3's thinking switch (auto-on for qwen3 models)
 //   AI_MIN_COVERAGE     how much of the question the notes must cover (default 0.5)
 
 'use strict';
@@ -33,7 +47,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const db = require('./db');
+const { DatabaseSync } = require('node:sqlite');
 
 function int(v, d) {
     const n = parseInt(v, 10);
@@ -52,9 +66,8 @@ const CFG = {
     contextChunks: Math.max(1, int(process.env.AI_CONTEXT_CHUNKS, 2)),
     chunkMaxChars: Math.max(200, int(process.env.AI_CHUNK_MAX_CHARS, 800)),
     perUserPerMinute: Math.max(1, int(process.env.AI_RATE_PER_MIN, 6)),
-    strict: process.env.AI_STRICT === 'true',
     noThink: process.env.AI_NO_THINK ? process.env.AI_NO_THINK === 'true' : /qwen3/i.test(MODEL),
-    logQuestions: process.env.AI_LOG_QUESTIONS !== 'false',
+    retentionDays: Math.max(1, int(process.env.AI_LOG_DAYS, 30)),
     minCoverage: parseFloat(process.env.AI_MIN_COVERAGE || '0.5'),
     debug: process.env.AI_DEBUG === 'true',
     cacheDays: 30,
@@ -63,10 +76,24 @@ const CFG = {
 
 const LESSONS_DIR = path.join(__dirname, 'lessons');
 
+// Is the model on this machine / local network, or a cloud service? Students
+// are told which, because a cloud model means their question leaves the server.
+const CLOUD_MODEL = (() => {
+    try {
+        const h = new URL(CFG.baseUrl).hostname;
+        return !(h === 'localhost' || h === '[::1]' || /^127\./.test(h) || /^10\./.test(h) ||
+            /^192\.168\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h));
+    } catch { return true; }
+})();
+
 // ---------------------------------------------------------------------------
-// Tables: answer cache + usage log (lives in the same node.db as accounts)
+// Own database file. Deliberately NOT node.db: the AI module cannot read
+// accounts because it never opens the accounts database.
 // ---------------------------------------------------------------------------
-db.exec(`
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+const aiDb = new DatabaseSync(path.join(DATA_DIR, 'ai.db'));
+aiDb.exec(`
   CREATE TABLE IF NOT EXISTS ai_cache (
     key TEXT PRIMARY KEY,
     answer TEXT NOT NULL,
@@ -76,18 +103,64 @@ db.exec(`
   );
   CREATE TABLE IF NOT EXISTS ai_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
     ts INTEGER NOT NULL,
-    question TEXT,
     course TEXT,
     grounded INTEGER,
     cached INTEGER,
     model TEXT,
     ms INTEGER,
     ok INTEGER NOT NULL DEFAULT 0,
-    rating INTEGER
+    rating INTEGER,
+    ticket TEXT
+  );
+  CREATE TABLE IF NOT EXISTS ai_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts INTEGER NOT NULL,
+    log_id INTEGER UNIQUE,
+    reason TEXT NOT NULL,
+    note TEXT,
+    answer TEXT,
+    sources TEXT,
+    resolved INTEGER NOT NULL DEFAULT 0
   );
 `);
+
+// Older versions stored question text. Remove those columns, then VACUUM so
+// the old text is physically erased from the file, not just hidden.
+(function dropStoredQuestions() {
+    let dropped = false;
+    for (const table of ['ai_log', 'ai_reports']) {
+        const cols = aiDb.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+        if (cols.includes('question')) { aiDb.exec(`ALTER TABLE ${table} DROP COLUMN question`); dropped = true; }
+    }
+    if (dropped) { aiDb.exec('VACUUM'); console.log('🧹 AI database: removed stored question text'); }
+})();
+
+// Retention: logs, reports and cached answers are deleted after AI_LOG_DAYS (default 30).
+function purgeOld() {
+    const logCut = Date.now() - CFG.retentionDays * 86400000;
+    aiDb.prepare('DELETE FROM ai_log WHERE ts < ?').run(logCut);
+    aiDb.prepare('DELETE FROM ai_reports WHERE ts < ?').run(logCut);
+    aiDb.prepare('DELETE FROM ai_cache WHERE created_at < ?').run(Date.now() - CFG.cacheDays * 86400000);
+}
+purgeOld();
+setInterval(purgeOld, 6 * 3600 * 1000).unref();
+
+// Removes obvious personal details from anything a student types, BEFORE it is
+// searched, sent to a model, or stored. Not perfect — the on-screen notice
+// tells students not to type personal details in the first place.
+const PII_PATTERNS = [
+    /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi,                       // email addresses
+    /(?:\+?234|\b0)[\s-]?[789][01]\d[\s-]?\d{3}[\s-]?\d{4}\b/g,      // Nigerian phone numbers
+    /\b\d{10,}\b/g,                                                   // long ID / account-like numbers
+    /\b(?:password|passcode|pin)\s*(?:is|=|:)\s*\S+/gi,              // "my password is ..."
+];
+function scrubPII(text) {
+    let out = String(text || '');
+    let hit = false;
+    for (const re of PII_PATTERNS) out = out.replace(re, () => { hit = true; return '[removed]'; });
+    return { text: out, scrubbed: hit };
+}
 
 // ---------------------------------------------------------------------------
 // 1. RETRIEVAL
@@ -96,7 +169,7 @@ const STOP = new Set((
     'a an the and or of to in on at for with by from is are was were be been being this that these those ' +
     'it its as if then than so such can could should would will shall may might do does did done have has ' +
     'had not no nor but into about over under between within without how what why when where which who ' +
-    'whom whose explain give tell me my your our their please define find show i we you they he she'
+    'whom whose explain give tell me my your our their please define find show i we you they he she removed'
 ).split(' '));
 
 const IRREGULAR = {
@@ -311,34 +384,29 @@ function search(query, { course = '', k = CFG.contextChunks } = {}) {
     };
 }
 
+
 // ---------------------------------------------------------------------------
 // 2. PROMPTS + GATEWAY
 // ---------------------------------------------------------------------------
-const SYSTEM_GROUNDED =
-    'You are NODE Tutor, a patient study helper for Nigerian university students. ' +
-    'Answer using the COURSE NOTES provided and cite them like [1] or [2]. ' +
-    'For problems, show clear steps and explain the reasoning. ' +
-    'Be concise (under 200 words). If the notes do not fully answer the question, say what is missing.';
+const SYSTEM_PROMPT =
+    'You are NODE Tutor, a study aid for university students. ' +
+    'Answer ONLY from the COURSE NOTES provided. Do not use outside knowledge. ' +
+    'Cite the notes you use like [1] or [2]. ' +
+    'If the notes do not contain the answer, reply exactly: "The course notes I have do not cover this." ' +
+    'For problems, show clear steps using only what the notes explain. Be concise (under 200 words).';
 
-const SYSTEM_UNGROUNDED =
-    'You are NODE Tutor, a patient study helper for Nigerian university students. ' +
-    'No course notes matched this question. Answer briefly and carefully from general knowledge, ' +
-    'and begin with: "Note: this is not from your NODE course notes." ' +
-    'For problems, show clear steps. Be concise (under 200 words). If you are unsure, say so.';
+const NO_NOTES_MSG =
+    "I couldn't find this in the NODE course materials yet. Try rephrasing your question. " +
+    'If the topic should be covered, tap "Request this topic" so your lecturers know.';
 
-function buildMessages(question, hits, grounded) {
-    let user;
-    if (grounded) {
-        const notes = hits.map((h, i) => `[${i + 1}] ${h.course} - ${h.heading}\n${h.text}`).join('\n\n');
-        user = `COURSE NOTES:\n${notes}\n\nSTUDENT QUESTION: ${question}`;
-    } else {
-        user = `STUDENT QUESTION: ${question}`;
-    }
+function buildMessages(question, hits) {
+    const notes = hits.map((h, i) => `[${i + 1}] ${h.course} - ${h.heading}\n${h.text}`).join('\n\n');
+    let user = `COURSE NOTES:\n${notes}\n\nSTUDENT QUESTION: ${question}`;
     // Qwen3 can "think" for hundreds of tokens before answering, which is far
     // too slow on a CPU. This soft switch turns that off.
     if (CFG.noThink) user += ' /no_think';
     return [
-        { role: 'system', content: grounded ? SYSTEM_GROUNDED : SYSTEM_UNGROUNDED },
+        { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: user },
     ];
 }
@@ -484,24 +552,28 @@ function cacheKey(question, course, grounded, sig) {
         .digest('hex');
 }
 function getCache(key) {
-    const row = db.prepare('SELECT answer, sources, grounded, created_at FROM ai_cache WHERE key = ?').get(key);
+    const row = aiDb.prepare('SELECT answer, sources, grounded, created_at FROM ai_cache WHERE key = ?').get(key);
     if (!row) return null;
     if (Date.now() - row.created_at > CFG.cacheDays * 86400000) return null;
     return { answer: row.answer, sources: JSON.parse(row.sources), grounded: !!row.grounded };
 }
 function setCache(key, answer, sources, grounded) {
-    db.prepare('INSERT OR REPLACE INTO ai_cache (key, answer, sources, grounded, created_at) VALUES (?, ?, ?, ?, ?)')
+    aiDb.prepare('INSERT OR REPLACE INTO ai_cache (key, answer, sources, grounded, created_at) VALUES (?, ?, ?, ?, ?)')
         .run(key, answer, JSON.stringify(sources), grounded ? 1 : 0, Date.now());
 }
 
-function startLog(userId, question, course, grounded) {
-    const info = db.prepare(
-        'INSERT INTO ai_log (user_id, ts, question, course, grounded, cached, model, ok) VALUES (?, ?, ?, ?, ?, 0, ?, 0)'
-    ).run(userId ?? null, Date.now(), CFG.logQuestions ? question : null, course || null, grounded ? 1 : 0, CFG.model);
-    return Number(info.lastInsertRowid);
+// The log holds NO account information. A random one-time "ticket" is handed
+// to the browser so it can rate or report its own answer without the server
+// ever knowing who asked.
+function startLog(course, grounded) {
+    const ticket = crypto.randomBytes(12).toString('hex');
+    const info = aiDb.prepare(
+        'INSERT INTO ai_log (ts, course, grounded, cached, model, ok, ticket) VALUES (?, ?, ?, 0, ?, 0, ?)'
+    ).run(Date.now(), course || null, grounded ? 1 : 0, CFG.model, ticket);
+    return { logId: Number(info.lastInsertRowid), ticket };
 }
 function finishLog(id, { ok, cached, ms }) {
-    db.prepare('UPDATE ai_log SET ok = ?, cached = ?, ms = ? WHERE id = ?').run(ok ? 1 : 0, cached ? 1 : 0, ms, id);
+    aiDb.prepare('UPDATE ai_log SET ok = ?, cached = ?, ms = ? WHERE id = ?').run(ok ? 1 : 0, cached ? 1 : 0, ms, id);
 }
 
 // ---------------------------------------------------------------------------
@@ -524,13 +596,23 @@ function sourcesOf(hits) {
     return hits.map((h, i) => ({ n: i + 1, course: h.course, heading: h.heading, url: h.url }));
 }
 
+const REPORT_REASONS = {
+    wrong: 'Wrong or misleading answer',
+    mismatch: "Doesn't match the notes",
+    unsafe: 'Offensive or unsafe',
+    missing: 'Topic is missing from the notes',
+    other: 'Other',
+};
+
 async function handleAsk(req, res) {
     if (!CFG.enabled) return res.status(503).json({ error: 'The AI tutor is switched off on this server.' });
 
-    const question = String((req.body && req.body.question) || '').trim().slice(0, 500);
+    const raw = String((req.body && req.body.question) || '').trim().slice(0, 500);
+    const { text: question, scrubbed } = scrubPII(raw);
     const course = String((req.body && req.body.course) || '').slice(0, 200);
     const wantStream = !(req.body && req.body.stream === false);
     if (question.length < 3) return res.status(400).json({ error: 'Please type a question.' });
+    // The user id is used ONLY as an in-memory rate-limit key. It is never stored.
     if (!rateOk(req.user.id)) {
         return res.status(429).json({ error: 'You are asking very quickly. Wait a few seconds and try again.' });
     }
@@ -538,7 +620,7 @@ async function handleAsk(req, res) {
     const t0 = Date.now();
     const { hits, grounded, sig } = search(question, { course });
     const sources = grounded ? sourcesOf(hits) : [];
-    const logId = startLog(req.user.id, question, course, grounded);
+    const { logId, ticket } = startLog(course, grounded);
 
     let streamStarted = false;
     const send = obj => res.write(`data: ${JSON.stringify(obj)}\n\n`);
@@ -552,15 +634,14 @@ async function handleAsk(req, res) {
         streamStarted = true;
         send({ type: 'meta', ...meta });
     };
-    const meta = cached => ({ sources, grounded, cached, logId });
+    const meta = cached => ({ sources, grounded, cached, logId, ticket, scrubbed });
 
-    // Strict mode: never answer outside the course notes.
-    if (CFG.strict && !grounded) {
-        const msg = "I couldn't find this in the NODE course materials yet. Try rephrasing, or ask your lecturer to upload notes on this topic.";
+    // Answers come ONLY from the course notes. No matching notes = no model call.
+    if (!grounded) {
         finishLog(logId, { ok: true, cached: false, ms: Date.now() - t0 });
-        if (!wantStream) return res.json({ answer: msg, ...meta(false) });
+        if (!wantStream) return res.json({ answer: NO_NOTES_MSG, ...meta(false) });
         beginStream(meta(false));
-        send({ type: 'token', text: msg });
+        send({ type: 'token', text: NO_NOTES_MSG });
         send({ type: 'done', ms: Date.now() - t0 });
         return res.end();
     }
@@ -603,7 +684,7 @@ async function handleAsk(req, res) {
             if (wantStream) send({ type: 'token', text });
         };
 
-        const { finishReason } = await streamCompletion(buildMessages(question, hits, grounded), ac.signal, d => {
+        const { finishReason } = await streamCompletion(buildMessages(question, hits), ac.signal, d => {
             const t = filter.push(d);
             if (t) emit(t);
         });
@@ -618,7 +699,7 @@ async function handleAsk(req, res) {
         const cutOff = finishReason === 'length';
         const looksComplete = /[.!?)\]`"'*\d]\s*$/.test(answer);
         console.log(`🤖 AI answered: ${answer.split(/\s+/).length} words, finish=${finishReason}, ` +
-            `${Date.now() - t0}ms, grounded=${grounded}${cutOff || !looksComplete ? ' (NOT cached: looks cut off)' : ''}`);
+            `${Date.now() - t0}ms${cutOff || !looksComplete ? ' (NOT cached: looks cut off)' : ''}`);
         if (cutOff) {
             const note = '\n\n(This answer was cut short. Ask about one specific part to get more detail.)';
             answer += note;
@@ -649,26 +730,33 @@ async function handleAsk(req, res) {
 }
 
 function mount(app, { verifyToken, requireRole }) {
-    // Public: is the tutor available? (lets the page hide the chat box if not)
+    // Public: is the tutor available, and what is its privacy policy?
     app.get('/api/ai/status', async (req, res) => {
         ensureIndex();
         res.json({
             enabled: CFG.enabled,
             online: CFG.enabled ? await modelServerOnline() : false,
             model: CFG.model,
-            strict: CFG.strict,
             chunks: INDEX.chunks.length,
             courses: INDEX.courses,
+            policy: {
+                studyAid: true,
+                onlyCourseMaterials: true,
+                storesQuestions: false,
+                retentionDays: CFG.retentionDays,
+                linkedToAccounts: false,
+                cloudModel: CLOUD_MODEL,
+            },
+            reasons: REPORT_REASONS,
         });
     });
 
     // Public: search INSIDE the lesson text (the existing /api/search only
-    // looks at course names and tags). No model involved, so it works on
-    // every tier, even a server with no AI at all.
+    // looks at course names and tags). No model involved.
     app.get('/api/ai/search', (req, res) => {
         const q = String(req.query.q || '').trim().slice(0, 200);
         if (!q) return res.status(400).json({ error: 'Missing ?q= search term' });
-        const { hits } = search(q, { course: String(req.query.course || ''), k: 8 });
+        const { hits } = search(scrubPII(q).text, { course: String(req.query.course || ''), k: 8 });
         res.json({
             query: q,
             count: hits.length,
@@ -681,24 +769,94 @@ function mount(app, { verifyToken, requireRole }) {
 
     app.post('/api/ai/ask', verifyToken, handleAsk);
 
+    // Thumbs up / down. The ticket proves the browser owns that answer,
+    // without the server knowing who the student is.
     app.post('/api/ai/feedback', verifyToken, (req, res) => {
         const logId = Number(req.body && req.body.logId);
+        const ticket = String((req.body && req.body.ticket) || '');
         const rating = Number(req.body && req.body.rating);
-        if (!Number.isInteger(logId) || (rating !== 1 && rating !== -1)) {
-            return res.status(400).json({ error: 'logId and rating (1 or -1) are required' });
+        if (!Number.isInteger(logId) || !ticket || (rating !== 1 && rating !== -1)) {
+            return res.status(400).json({ error: 'logId, ticket and rating (1 or -1) are required' });
         }
-        db.prepare('UPDATE ai_log SET rating = ? WHERE id = ? AND user_id = ?').run(rating, logId, req.user.id);
+        aiDb.prepare('UPDATE ai_log SET rating = ? WHERE id = ? AND ticket = ?').run(rating, logId, ticket);
         res.json({ success: true });
     });
 
-    // Teachers/admins: how is the tutor doing?
+    // Students report a wrong answer, or request a missing topic. Only the
+    // answer on screen and what the student types in the form are kept (the
+    // question itself is never sent). Shown to lecturers, deleted after the
+    // retention period, not linked to any account.
+    app.post('/api/ai/report', verifyToken, (req, res) => {
+        const b = req.body || {};
+        const logId = Number(b.logId);
+        const reason = String(b.reason || '');
+        if (!Number.isInteger(logId) || !REPORT_REASONS[reason]) {
+            return res.status(400).json({ error: 'A valid answer and reason are required.' });
+        }
+        if (!rateOk('report:' + req.user.id)) {
+            return res.status(429).json({ error: 'Too many reports. Please wait a minute.' });
+        }
+        const row = aiDb.prepare('SELECT id FROM ai_log WHERE id = ? AND ticket = ?').get(logId, String(b.ticket || ''));
+        if (!row) {
+            return res.status(404).json({ error: 'We could not match this report to an answer. Ask again, then report from the new answer.' });
+        }
+        const clean = (v, n) => scrubPII(String(v || '').slice(0, n)).text;
+        const note = clean(b.note, 300).trim();
+        if (reason === 'missing' && note.length < 3) {
+            return res.status(400).json({ error: 'Please say which topic is missing.' });
+        }
+        const sources = Array.isArray(b.sources) ? b.sources.slice(0, 3).map(s => clean(s, 200)) : [];
+        try {
+            aiDb.prepare(
+                'INSERT INTO ai_reports (ts, log_id, reason, note, answer, sources) VALUES (?, ?, ?, ?, ?, ?)'
+            ).run(Date.now(), logId, reason, note, clean(b.answer, 3000), JSON.stringify(sources));
+        } catch (e) {
+            if (/UNIQUE/i.test(String(e.message))) return res.json({ success: true, duplicate: true });
+            throw e;
+        }
+        res.json({ success: true });
+    });
+
+    // Lecturers: read and close reports.
+    app.get('/api/ai/reports', verifyToken, requireRole('teacher'), (req, res) => {
+        const rows = aiDb.prepare(
+            'SELECT id, ts, reason, note, answer, sources, resolved FROM ai_reports ORDER BY resolved ASC, ts DESC LIMIT 100'
+        ).all();
+        res.json({
+            retentionDays: CFG.retentionDays,
+            reports: rows.map(r => ({
+                ...r,
+                reasonLabel: REPORT_REASONS[r.reason] || r.reason,
+                sources: JSON.parse(r.sources || '[]'),
+                resolved: !!r.resolved,
+            })),
+        });
+    });
+    app.post('/api/ai/reports/:id/resolve', verifyToken, requireRole('teacher'), (req, res) => {
+        aiDb.prepare('UPDATE ai_reports SET resolved = 1 WHERE id = ?').run(Number(req.params.id));
+        res.json({ success: true });
+    });
+
+    // Lecturers: which topics are missing from the notes? Questions are never
+    // stored, so this is built from (a) a count of questions that matched no
+    // notes and (b) the topics students chose to request.
+    app.get('/api/ai/gaps', verifyToken, requireRole('teacher'), (req, res) => {
+        const unanswered = aiDb.prepare('SELECT COUNT(*) AS n FROM ai_log WHERE grounded = 0').get().n;
+        const requests = aiDb.prepare(`
+            SELECT lower(trim(note)) AS topic, COUNT(*) AS requested, MAX(ts) AS last_requested
+            FROM ai_reports WHERE reason = 'missing' AND note IS NOT NULL AND trim(note) != ''
+            GROUP BY lower(trim(note)) ORDER BY requested DESC, last_requested DESC LIMIT 30`).all();
+        res.json({ retentionDays: CFG.retentionDays, unanswered, requests });
+    });
+
+    // Lecturers: how is the tutor doing?
     app.get('/api/ai/stats', verifyToken, requireRole('teacher'), (req, res) => {
-        const row = db.prepare(`
+        const row = aiDb.prepare(`
             SELECT COUNT(*) AS total,
                    SUM(cached) AS cached,
                    SUM(grounded) AS grounded,
                    SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END) AS failed,
-                   AVG(CASE WHEN cached = 0 AND ok = 1 THEN ms END) AS avg_ms,
+                   AVG(CASE WHEN cached = 0 AND ok = 1 AND grounded = 1 THEN ms END) AS avg_ms,
                    SUM(CASE WHEN rating = 1 THEN 1 ELSE 0 END) AS thumbs_up,
                    SUM(CASE WHEN rating = -1 THEN 1 ELSE 0 END) AS thumbs_down
             FROM ai_log`).get();
@@ -711,5 +869,5 @@ function mount(app, { verifyToken, requireRole }) {
 
 module.exports = {
     mount,
-    _internals: { tokenize, chunkMarkdown, search, ensureIndex, makeThinkFilter, buildMessages, CFG },
+    _internals: { tokenize, chunkMarkdown, search, ensureIndex, makeThinkFilter, buildMessages, scrubPII, purgeOld, CFG, aiDb },
 };
