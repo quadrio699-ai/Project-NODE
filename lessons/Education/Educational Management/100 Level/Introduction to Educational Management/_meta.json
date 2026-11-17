@@ -1,0 +1,13 @@
+{
+  "courseCode": EDM 111,
+  "courseTitle": "Introduction to Educational Management",
+  "faculty": "Education",
+  "department": "Educational Management",
+  "level": "200 Level",
+  "topicTags": ["school administration", "leadership"],
+  "crossListedWith": [],
+  "sharedWith": [],
+  "prerequisites": [],
+  "isCanonical": true,
+  "canonicalPath": null
+}
