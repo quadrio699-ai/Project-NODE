@@ -22,7 +22,7 @@ app.use(express.json());
 // hashes), /database.json (real comments), or the server code itself,
 // just by requesting the exact filename.
 app.use((req, res, next) => {
-    const blocked = /\.(db|db-shm|db-wal)$|^\/database\.json$|^\/server\.js$|^\/(auth|ai|mock-llm|test-ai)\.js$|^\/auth\.js$|^\/package(-lock)?\.json$/;
+    const blocked = /\.(db|db-shm|db-wal)$|^\/database\.json$|^\/server\.js$|^\/db\.js$|^\/(auth|ai|mock-llm|test-ai)\.js$|^\/package(-lock)?\.json$/;
     if (blocked.test(req.path)) return res.status(404).end();
     next();
 });
