@@ -439,6 +439,7 @@ app.get('/api/view/*', (req, res) => {
 <head>
 <meta charset="utf-8">
 <title>${title}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   body { font-family: Georgia, 'Times New Roman', serif; max-width: 800px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #222; }
   h1, h2, h3 { font-family: Arial, sans-serif; color: #006633; }
