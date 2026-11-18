@@ -1,0 +1,16 @@
+{
+  "courseCode": GNS 111,
+  "courseTitle": "General studies",
+  "faculty": "Education",
+  "department": "All department
+  "level": "100 Level",
+  "topicTags": ["writing skills",
+        "written communication",
+        "principles of writing",
+        "punctuation],
+  "crossListedWith": [],
+  "sharedWith": [],
+  "prerequisites": [],
+  "isCanonical": true,
+  "canonicalPath": null
+}
