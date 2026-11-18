@@ -513,7 +513,7 @@
             return `
             <div class="lesson-item">
                 <div style="font-weight: 500;">${file}</div>
-                <div style="margin-top: 8px;"><a href="/lessons/${path}/${file}" target="_blank" class="btn view-btn">Read Online</a>
+                <div style="margin-top: 8px;"><a href="${isMd ? '/api/view' : '/lessons'}/${path}/${file}" target="_blank" class="btn view-btn">Read Online</a>
                     <a href="/api/download/${path}/${file}" class="btn dl-btn">Save Offline</a>
                     ${isMd ? `<a href="/api/view/${path}/${file}" target="_blank" class="btn view-btn">Print / Save as PDF</a>` : ''}
                     <a href="${qrBroadcastLink}" target="_blank" class="btn qr-btn">Share via QR</a>
