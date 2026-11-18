@@ -211,10 +211,8 @@ function chunkMarkdown(md, maxChars) {
     };
     for (const line of md.split(/\r?\n/)) {
         const m = /^(#{1,4})\s+(.*)$/.exec(line);
-        if (m) { flush(); heading = m[2].trim(); } else buf.push(line);
-    }
+      if (m) { flush(); heading = m[2].replace(/[*_`]/g, '').trim(); } else buf.push(line);
     flush();
-
     const out = [];
     for (const s of sections) {
         if (s.text.length <= maxChars) { out.push(s); continue; }
