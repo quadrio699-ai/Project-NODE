@@ -1,0 +1,13 @@
+{
+  "courseCode": null,
+  "courseTitle": "Education Study Map",
+  "faculty": "Education",
+  "department": "General Courses",
+  "level": "100 Level",
+  "topicTags": ["study map", "course overview", "educational management", "curriculum development", "communication in english", "first aid"],
+  "crossListedWith": [],
+  "sharedWith": [],
+  "prerequisites": [],
+  "isCanonical": true,
+  "canonicalPath": null
+}

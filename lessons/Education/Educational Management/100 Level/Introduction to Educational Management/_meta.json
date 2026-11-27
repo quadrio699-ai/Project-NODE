@@ -1,10 +1,18 @@
 {
-  "courseCode": EDM 111,
+  "courseCode": "EDM 111",
   "courseTitle": "Introduction to Educational Management",
   "faculty": "Education",
   "department": "Educational Management",
-  "level": "200 Level",
-  "topicTags": ["school administration", "leadership"],
+  "level": "100 Level",
+  "topicTags": [
+    "educational management",
+    "educational administration",
+    "school administration",
+    "leadership",
+    "principles of management",
+    "fayol",
+    "posdcorb"
+  ],
   "crossListedWith": [],
   "sharedWith": [],
   "prerequisites": [],

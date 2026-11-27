@@ -1,0 +1,13 @@
+{
+  "courseCode": "PMG 221",
+  "courseTitle": "Project Scheduling and Cost Management",
+  "faculty": "Management Sciences",
+  "department": "Management Technology",
+  "level": "200 Level",
+  "topicTags": ["project scheduling", "critical path method", "pert", "crashing", "network analysis", "resource levelling", "work breakdown structure", "task dependencies", "cost estimation", "earned value management", "depreciation", "monte carlo simulation"],
+  "crossListedWith": [],
+  "sharedWith": [],
+  "prerequisites": [],
+  "isCanonical": true,
+  "canonicalPath": null
+}
