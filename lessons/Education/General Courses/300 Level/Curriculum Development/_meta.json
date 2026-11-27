@@ -1,0 +1,24 @@
+{
+  "courseCode": "LAS 321",
+  "courseTitle": "Curriculum Development",
+  "faculty": "Education",
+  "department": "General Courses",
+  "level": "300 Level",
+  "topicTags": [
+    "curriculum development",
+    "curriculum evaluation",
+    "educational objectives",
+    "blooms taxonomy",
+    "hidden curriculum",
+    "tyler model",
+    "taba model",
+    "philosophy of education",
+    "content selection",
+    "curriculum organisation"
+  ],
+  "crossListedWith": [],
+  "sharedWith": [],
+  "prerequisites": [],
+  "isCanonical": true,
+  "canonicalPath": null
+}

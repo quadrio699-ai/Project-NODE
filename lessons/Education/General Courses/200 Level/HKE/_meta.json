@@ -1,10 +1,11 @@
 {
-  "courseCode": HKE 210,
-  "courseTitle": "GENERAL CONCEPT AND PRINCIPLE OF FIRST AID",
+  "courseCode": "HKE 210",
+  "courseTitle": "General Concept and Principle of First Aid",
   "faculty": "Education",
-  "department": "All department
+  "department": "General Courses",
   "level": "200 Level",
-  "topicTags": [""first aid principles",
+  "topicTags": [
+    "first aid principles",
     "safety education",
     "emergency response",
     "bone and joint injuries",
